@@ -21,10 +21,10 @@ jobs:
         run: cargo build --release
 
       - name: Copy executable to root
-        run: cp target/release/rust_autoclicker.exe .
+        run: copy target\release\rust_autoclicker.exe .
 
       - name: Clean up target directory
-        run: rm -rf target
+        run: rd /s /q target
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
