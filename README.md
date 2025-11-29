@@ -29,7 +29,6 @@ A fast, ultra-precise auto clicker of Rust for Windows. It features advanced tim
 ### Prerequisites
 
 * Rustup (https://rustup.rs/)
-* (Optional) Visual Studio Build Tools (https://visualstudio.microsoft.com/visual-cpp-build-tools/)
 
 ### Build Commands
 ```bash
