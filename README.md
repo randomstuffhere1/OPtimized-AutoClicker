@@ -56,9 +56,22 @@ Check scripts: `check.bat` and `check.sh` for quick validation
 
 These scripts automatically handle both debug and release builds and report success/failure status.
 
+## Downloading Releases
+
+### Github Actions Builds
+
+You can download pre-compiled binaries directly from the Github Actions workflow:
+
+1. Navigate to the "Actions" tab
+2. Select the latest successful workflow run
+3. Scroll down to the "Artifacts" section
+4. Download the Windows release binary
+
+**Note**: Github Actions builds are manually triggered and only compiled when a stable build is ready. These builds represent carefully vetted releases with full optimizations.
+
 ## Usage
 
-1. **Launch the Application**: Execute `target/release/rust_autoclicker.exe`
+1. **Launch the Application**: Execute 'rust_autoclicker.exe' (usually found in `target/release` if you built it yourself)
 2. **Configure Settings**:
 	* Define the click interval by filling in the hours, minutes, seconds, and milliseconds fields
 	* Choose the mouse button (Left, Right, or Middle)
