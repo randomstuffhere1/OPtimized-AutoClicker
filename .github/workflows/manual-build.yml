@@ -20,10 +20,16 @@ jobs:
       - name: Build release
         run: cargo build --release
 
+      - name: Copy executable to root
+        run: cp target/release/rust_autoclicker.exe .
+
+      - name: Clean up target directory
+        run: rm -rf target
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: rust-autoclicker-windows
           path: |
-            target/release/rust_autoclicker.exe
+            rust_autoclicker.exe
             icon.ico
