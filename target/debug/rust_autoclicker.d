@@ -1,1 +1,0 @@
-C:\Users\Fesuoy\Desktop\Stuff\Rust\AutoClicker\target\debug\rust_autoclicker.exe: C:\Users\Fesuoy\Desktop\Stuff\Rust\AutoClicker\build.rs C:\Users\Fesuoy\Desktop\Stuff\Rust\AutoClicker\icon.ico C:\Users\Fesuoy\Desktop\Stuff\Rust\AutoClicker\src\main.rs
