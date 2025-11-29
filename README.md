@@ -49,9 +49,8 @@ cargo check
 The project has build scripts for easy building:
 
 * **Windows**: `build.bat` - Builds both debug and release versions
-* **Linux/WSL**: `build.sh` - Builds both debug and release versions
 
-Check scripts: `check.bat` and `check.sh` for quick validation
+Check scripts: `check.bat` for quick validation
 
 These scripts automatically handle both debug and release builds and report success/failure status.
 
