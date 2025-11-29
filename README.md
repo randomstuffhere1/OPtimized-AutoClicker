@@ -1,4 +1,4 @@
-# (OP)timized Auto Clicker v2.0.0
+# (OP)timized Auto Clicker v2.1.1
 *Like the [original](https://opautoclicker.dev/), but written in Rust!*
 
 A fast, ultra-precise auto clicker of Rust for Windows. It features advanced timing algorithms, customizable click patterns, and a native Windows GUI interface.
