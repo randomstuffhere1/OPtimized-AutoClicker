@@ -24,7 +24,7 @@ jobs:
         run: copy target\release\rust_autoclicker.exe .
 
       - name: Clean up target directory
-        run: rd /s /q target
+        run: cargo clean
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
