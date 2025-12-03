@@ -65,9 +65,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     IDI_APPLICATION, IMAGE_ICON, LR_LOADFROMFILE,
 };
 use windows::Win32::System::Console::FreeConsole;
-use windows::Win32::System::Threading::{SetThreadPriority, SetPriorityClass, 
-    THREAD_PRIORITY_HIGHEST, HIGH_PRIORITY_CLASS};
-use windows::Win32::System::{Threading::GetCurrentProcess, Threading::GetCurrentThread, Threading::OpenProcessToken};
+use windows::Win32::System::Threading::{SetThreadPriority, SetPriorityClass,
+    THREAD_PRIORITY_HIGHEST, HIGH_PRIORITY_CLASS, GetCurrentThread, SetThreadAffinityMask};
+use windows::Win32::System::{Threading::GetCurrentProcess, Threading::OpenProcessToken};
 use windows::Win32::Security::{
     GetTokenInformation, TokenElevation,
     TOKEN_QUERY, TOKEN_ELEVATION
@@ -632,8 +632,8 @@ unsafe fn load_settings() {
 
 // --- Ultra-Performance Clicker Logic ---
 unsafe fn clicker_loop(
-    hwnd: isize, 
-    h: i32, m: i32, s: i32, ms: i32, 
+    hwnd: isize,
+    h: i32, m: i32, s: i32, ms: i32,
     use_random: bool, random_offset: i32,
     repeat_finite: bool, repeat_count: i32,
     repeat_time: bool, repeat_duration_seconds: f64,
@@ -642,9 +642,12 @@ unsafe fn clicker_loop(
     use_fixed_pos: bool, fixed_x: i32, fixed_y: i32
 ) {
     let hwnd = HWND(hwnd);
-    
+
     let total_millis = (h as i64 * 3600000) + (m as i64 * 60000) + (s as i64 * 1000) + ms as i64;
     let total_millis = if total_millis < 0 { 0 } else { total_millis };
+
+    // Pin to CPU core 0 for maximum determinism and cache locality
+    let _ = SetThreadAffinityMask(GetCurrentThread(), 1);
 
     // This fixes thread::sleep being inaccurate for values like 2ms, 5ms, etc.
     timeBeginPeriod(1);
@@ -875,13 +878,22 @@ unsafe fn clicker_loop(
         let target_delay_tsc = current_sleep_ns * 3; 
 
         if use_ultra_precision {
-            // Busy wait (Spin loop)
+            // Ultra-precise mode: Minimize cache misses and atomic loads for <15ms intervals
+            let mut running_cache = is_running;
+            let mut cache_counter = 0u64;
+            let cache_refresh_interval = 100; // Check less frequently in ultra-precise mode
+
             let target_tsc = last_tsc + target_delay_tsc;
             loop {
                 let current_tsc = get_high_precision_time();
-                if current_tsc >= target_tsc || !is_running { break; }
+                if current_tsc >= target_tsc || !running_cache { break; }
                 cpu_relax();
-                if click_count % 50 == 0 { is_running = IS_RUNNING.load(Ordering::Relaxed); }
+
+                // Update cache less frequently to reduce atomic overhead
+                cache_counter = cache_counter.wrapping_add(1);
+                if cache_counter % cache_refresh_interval == 0 {
+                    running_cache = IS_RUNNING.load(Ordering::Relaxed);
+                }
             }
         } else if use_high_precision {
             // Hybrid
