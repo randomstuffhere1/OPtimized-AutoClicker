@@ -180,8 +180,6 @@ The program keeps track of:
 ## Dependencies
 
 * `windows` crate (v0.52) - Windows API bindings
-* `rand` crate (v0.8) - Random number generation
-* `rand_chacha` crate (v0.3) - ChaCha-based RNG algorithms
 
 ## License
 
