@@ -1,0 +1,34 @@
+# AutoClicker Settings v1
+# Generated at: 1764792141
+
+[timing]
+hours=0
+minutes=0
+seconds=0
+milliseconds=10
+
+[random]
+enabled=0
+offset_ms=40
+allow_increment=1
+allow_decrement=1
+
+[behavior]
+mouse_button=0
+click_type=0
+
+[repeat]
+mode=while_held
+
+[position]
+use_fixed_position=1
+x=947
+y=126
+
+[hotkey]
+vk=88
+modifiers=0
+
+[preferences]
+suppress_admin_popup=1
+safety_disable_enabled=1

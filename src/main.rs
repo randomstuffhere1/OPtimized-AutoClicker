@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::Write;
 
 use windows::core::{PCWSTR, w};
 
@@ -108,6 +108,9 @@ const IDC_EDIT_REPEAT_TIME: i32 = 122;
 
 const IDC_RADIO_REPEAT_HOLD: i32 = 123;
 
+const IDC_CHECK_RANDOM_INCREMENT: i32 = 124;
+const IDC_CHECK_RANDOM_DECREMENT: i32 = 125;
+
 const IDC_HK_BTN_SET: i32 = 201;
 const IDC_HK_BTN_DISPLAY: i32 = 202;
 const IDC_HK_BTN_OK: i32 = 203;
@@ -121,11 +124,170 @@ const IDC_SETTINGS_CHECK_SAFETY_DISABLE: i32 = 304;
 const IDC_SETTINGS_BTN_OK: i32 = 302;
 const IDC_SETTINGS_BTN_CANCEL: i32 = 303;
 
-const CONFIG_FILE: &str = "autoclicker_settings.dat";
+const CONFIG_FILE: &str = "autoclicker_settings.toml";
 
 // Win32 API Constants often missing or named differently
 const COLOR_BTNFACE: u32 = 15;
 const SS_LEFT: u32 = 0x00000000;
+
+// --- Application Settings Structures ---
+#[derive(Debug, Clone)]
+struct TimingSettings {
+    hours: u32,
+    minutes: u32,
+    seconds: u32,
+    milliseconds: u32,
+}
+
+impl Default for TimingSettings {
+    fn default() -> Self {
+        Self {
+            hours: 0,
+            minutes: 0,
+            seconds: 0,
+            milliseconds: 100,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct RandomSettings {
+    enabled: bool,
+    offset_ms: u32,
+    allow_increment: bool,
+    allow_decrement: bool,
+}
+
+impl Default for RandomSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            offset_ms: 40,
+            allow_increment: true,
+            allow_decrement: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct BehaviorSettings {
+    mouse_button: u32,  // 0=Left, 1=Right, 2=Middle
+    click_type: u32,    // 0=Single, 1=Double
+}
+
+impl Default for BehaviorSettings {
+    fn default() -> Self {
+        Self {
+            mouse_button: 0,
+            click_type: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RepeatMode {
+    UntilStopped,
+    Times,
+    TimeDuration,
+    WhileHeld,
+}
+
+impl Default for RepeatMode {
+    fn default() -> Self {
+        RepeatMode::UntilStopped
+    }
+}
+
+#[derive(Debug, Clone)]
+struct RepeatSettings {
+    mode: RepeatMode,
+    count: u32,               // for RepeatTimes mode
+    duration_seconds: f64,    // for RepeatTime mode
+}
+
+impl Default for RepeatSettings {
+    fn default() -> Self {
+        Self {
+            mode: RepeatMode::UntilStopped,
+            count: 1,
+            duration_seconds: 5.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PositionSettings {
+    use_fixed_position: bool,
+    x: i32,
+    y: i32,
+}
+
+impl Default for PositionSettings {
+    fn default() -> Self {
+        Self {
+            use_fixed_position: false,
+            x: 0,
+            y: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct HotkeySettings {
+    vk: u16,
+    modifiers: u32,
+}
+
+impl Default for HotkeySettings {
+    fn default() -> Self {
+        Self {
+            vk: VK_F2.0 as u16,
+            modifiers: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PreferencesSettings {
+    suppress_admin_popup: bool,
+    safety_disable_enabled: bool,
+}
+
+impl Default for PreferencesSettings {
+    fn default() -> Self {
+        Self {
+            suppress_admin_popup: false,
+            safety_disable_enabled: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AppSettings {
+    version: u32,
+    timing: TimingSettings,
+    random: RandomSettings,
+    behavior: BehaviorSettings,
+    repeat: RepeatSettings,
+    position: PositionSettings,
+    hotkey: HotkeySettings,
+    preferences: PreferencesSettings,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            timing: TimingSettings::default(),
+            random: RandomSettings::default(),
+            behavior: BehaviorSettings::default(),
+            repeat: RepeatSettings::default(),
+            position: PositionSettings::default(),
+            hotkey: HotkeySettings::default(),
+            preferences: PreferencesSettings::default(),
+        }
+    }
+}
 
 // --- Global State ---
 static mut USE_DEFAULT_SETTINGS: bool = false;
@@ -335,11 +497,10 @@ unsafe fn check_dlg_button(h_wnd: HWND, id: i32, checked: bool) {
     SendMessageW(GetDlgItem(h_wnd, id), BM_SETCHECK, WPARAM(state.0 as usize), LPARAM(0));
 }
 
-unsafe fn check_radio_button(h_wnd: HWND, first: i32, last: i32, check: i32) {
-    for id in first..=last {
-        let state = if id == check { BST_CHECKED } else { BST_UNCHECKED };
-        SendMessageW(GetDlgItem(h_wnd, id), BM_SETCHECK, WPARAM(state.0 as usize), LPARAM(0));
-    }
+// Fixed radio button function - now individually sets each button instead of using a range
+unsafe fn check_radio_button_individual(h_wnd: HWND, button_id: i32, checked: bool) {
+    let state = if checked { BST_CHECKED } else { BST_UNCHECKED };
+    SendMessageW(GetDlgItem(h_wnd, button_id), BM_SETCHECK, WPARAM(state.0 as usize), LPARAM(0));
 }
 
 fn get_key_name(vk: VIRTUAL_KEY) -> &'static str {
@@ -520,114 +681,463 @@ unsafe fn update_start_button_text() {
     }
 }
 
-// --- Persistence ---
-unsafe fn save_settings() {
-    // Don't save settings if using default mode
-    if USE_DEFAULT_SETTINGS {
-        return;
+// --- Persistence System ---
+
+impl AppSettings {
+    /// Load settings from the UI controls, validating and clamping values
+    unsafe fn from_ui(h_wnd: HWND) -> Self {
+        let mut settings = Self::default();
+
+        // Timing settings with validation
+        settings.timing.hours = clamp(get_int_from_edit(h_wnd, IDC_EDIT_HOURS) as u32, 0, 23);
+        settings.timing.minutes = clamp(get_int_from_edit(h_wnd, IDC_EDIT_MINS) as u32, 0, 59);
+        settings.timing.seconds = clamp(get_int_from_edit(h_wnd, IDC_EDIT_SECS) as u32, 0, 59);
+        settings.timing.milliseconds = clamp(get_int_from_edit(h_wnd, IDC_EDIT_MILLIS) as u32, 0, 999);
+
+        // Random settings
+        settings.random.enabled = is_dlg_button_checked(h_wnd, IDC_CHECK_RANDOM);
+        settings.random.offset_ms = clamp(get_int_from_edit(h_wnd, IDC_EDIT_RANDOM) as u32, 0, 1000);
+        settings.random.allow_increment = is_dlg_button_checked(h_wnd, IDC_CHECK_RANDOM_INCREMENT);
+        settings.random.allow_decrement = is_dlg_button_checked(h_wnd, IDC_CHECK_RANDOM_DECREMENT);
+
+        // Behavior settings
+        settings.behavior.mouse_button = clamp(
+            SendMessageW(GetDlgItem(h_wnd, IDC_COMBO_MOUSE_BTN), CB_GETCURSEL, WPARAM(0), LPARAM(0)).0 as u32,
+            0, 2
+        );
+        settings.behavior.click_type = clamp(
+            SendMessageW(GetDlgItem(h_wnd, IDC_COMBO_CLICK_TYPE), CB_GETCURSEL, WPARAM(0), LPARAM(0)).0 as u32,
+            0, 1
+        );
+
+        // Repeat settings - fix: properly handle all repeat modes
+        if is_dlg_button_checked(h_wnd, IDC_RADIO_REPEAT_TIMES) {
+            settings.repeat.mode = RepeatMode::Times;
+            settings.repeat.count = clamp(get_int_from_edit(h_wnd, IDC_EDIT_REPEAT_COUNT) as u32, 1, 999999);
+        } else if is_dlg_button_checked(h_wnd, IDC_RADIO_REPEAT_TIME) {
+            settings.repeat.mode = RepeatMode::TimeDuration;
+            settings.repeat.duration_seconds = clamp_float(get_float_from_edit(h_wnd, IDC_EDIT_REPEAT_TIME), 0.1, 999.9);
+        } else if is_dlg_button_checked(h_wnd, IDC_RADIO_REPEAT_HOLD) {
+            settings.repeat.mode = RepeatMode::WhileHeld;
+        } else {
+            settings.repeat.mode = RepeatMode::UntilStopped;
+        }
+
+        // Position settings
+        settings.position.use_fixed_position = is_dlg_button_checked(h_wnd, IDC_RADIO_POS_PICK);
+        settings.position.x = get_int_from_edit(h_wnd, IDC_EDIT_X);
+        settings.position.y = get_int_from_edit(h_wnd, IDC_EDIT_Y);
+
+        // Hotkey settings from global state
+        settings.hotkey.vk = STATE.current_hotkey.vk.0 as u16;
+        settings.hotkey.modifiers = STATE.current_hotkey.modifiers.0 as u32;
+
+        // Preferences from global state
+        settings.preferences.suppress_admin_popup = STATE.suppress_admin_popup;
+        settings.preferences.safety_disable_enabled = STATE.safety_disable_enabled;
+
+        settings
     }
-    
-    let h_wnd = STATE.h_main_wnd;
-    let mut output = String::with_capacity(256); // Pre-allocate capacity
 
-    output.push_str(&format!("IntervalH={}\n", get_int_from_edit(h_wnd, IDC_EDIT_HOURS)));
-    output.push_str(&format!("IntervalM={}\n", get_int_from_edit(h_wnd, IDC_EDIT_MINS)));
-    output.push_str(&format!("IntervalS={}\n", get_int_from_edit(h_wnd, IDC_EDIT_SECS)));
-    output.push_str(&format!("IntervalMs={}\n", get_int_from_edit(h_wnd, IDC_EDIT_MILLIS)));
+    /// Apply settings to the UI controls
+    unsafe fn to_ui(&self, h_wnd: HWND) {
+        // Timing settings
+        set_int_to_edit(h_wnd, IDC_EDIT_HOURS, self.timing.hours as i32);
+        set_int_to_edit(h_wnd, IDC_EDIT_MINS, self.timing.minutes as i32);
+        set_int_to_edit(h_wnd, IDC_EDIT_SECS, self.timing.seconds as i32);
+        set_int_to_edit(h_wnd, IDC_EDIT_MILLIS, self.timing.milliseconds as i32);
 
-    let rnd_checked = is_dlg_button_checked(h_wnd, IDC_CHECK_RANDOM);
-    output.push_str(&format!("RandomCheck={}\n", u8::from(rnd_checked)));
-    output.push_str(&format!("RandomVal={}\n", get_int_from_edit(h_wnd, IDC_EDIT_RANDOM)));
+        // Random settings
+        check_dlg_button(h_wnd, IDC_CHECK_RANDOM, self.random.enabled);
+        set_int_to_edit(h_wnd, IDC_EDIT_RANDOM, self.random.offset_ms as i32);
+        check_dlg_button(h_wnd, IDC_CHECK_RANDOM_INCREMENT, self.random.allow_increment);
+        check_dlg_button(h_wnd, IDC_CHECK_RANDOM_DECREMENT, self.random.allow_decrement);
 
-    let mouse_btn = SendMessageW(GetDlgItem(h_wnd, IDC_COMBO_MOUSE_BTN), CB_GETCURSEL, WPARAM(0), LPARAM(0));
-    output.push_str(&format!("MouseBtn={}\n", mouse_btn.0));
-    
-    let click_type = SendMessageW(GetDlgItem(h_wnd, IDC_COMBO_CLICK_TYPE), CB_GETCURSEL, WPARAM(0), LPARAM(0));
-    output.push_str(&format!("ClickType={}\n", click_type.0));
+        // Behavior settings
+        SendMessageW(GetDlgItem(h_wnd, IDC_COMBO_MOUSE_BTN), CB_SETCURSEL, WPARAM(self.behavior.mouse_button as usize), LPARAM(0));
+        SendMessageW(GetDlgItem(h_wnd, IDC_COMBO_CLICK_TYPE), CB_SETCURSEL, WPARAM(self.behavior.click_type as usize), LPARAM(0));
 
-    let repeat_check = is_dlg_button_checked(h_wnd, IDC_RADIO_REPEAT_TIMES);
-    output.push_str(&format!("RepeatCheck={}\n", u8::from(repeat_check)));
-    output.push_str(&format!("RepeatCount={}\n", get_int_from_edit(h_wnd, IDC_EDIT_REPEAT_COUNT)));
-    
-    let repeat_time_check = is_dlg_button_checked(h_wnd, IDC_RADIO_REPEAT_TIME);
-    output.push_str(&format!("RepeatTimeCheck={}\n", u8::from(repeat_time_check)));
-    output.push_str(&format!("RepeatTime={}\n", get_float_from_edit(h_wnd, IDC_EDIT_REPEAT_TIME)));
+        // FIXED: Repeat settings - individually set each radio button to avoid range issues
+        // First, uncheck all repeat radio buttons
+        check_radio_button_individual(h_wnd, IDC_RADIO_REPEAT_TIMES, false);
+        check_radio_button_individual(h_wnd, IDC_RADIO_REPEAT_TIME, false);
+        check_radio_button_individual(h_wnd, IDC_RADIO_REPEAT_HOLD, false);
+        check_radio_button_individual(h_wnd, IDC_RADIO_REPEAT_UNTIL, false);
+        
+        // Then check the appropriate one based on mode
+        match self.repeat.mode {
+            RepeatMode::Times => {
+                check_radio_button_individual(h_wnd, IDC_RADIO_REPEAT_TIMES, true);
+                set_int_to_edit(h_wnd, IDC_EDIT_REPEAT_COUNT, self.repeat.count as i32);
+            },
+            RepeatMode::TimeDuration => {
+                check_radio_button_individual(h_wnd, IDC_RADIO_REPEAT_TIME, true);
+                set_float_to_edit(h_wnd, IDC_EDIT_REPEAT_TIME, self.repeat.duration_seconds);
+            },
+            RepeatMode::WhileHeld => {
+                check_radio_button_individual(h_wnd, IDC_RADIO_REPEAT_HOLD, true);
+            },
+            RepeatMode::UntilStopped => {
+                check_radio_button_individual(h_wnd, IDC_RADIO_REPEAT_UNTIL, true);
+            }
+        }
 
-    let repeat_hold_check = is_dlg_button_checked(h_wnd, IDC_RADIO_REPEAT_HOLD);
-    output.push_str(&format!("RepeatHoldCheck={}\n", u8::from(repeat_hold_check)));
+        // Position settings
+        check_radio_button_individual(h_wnd, IDC_RADIO_POS_CURRENT, !self.position.use_fixed_position);
+        check_radio_button_individual(h_wnd, IDC_RADIO_POS_PICK, self.position.use_fixed_position);
+        EnableWindow(GetDlgItem(h_wnd, IDC_BTN_PICK_LOC), if self.position.use_fixed_position { TRUE } else { FALSE });
+        set_int_to_edit(h_wnd, IDC_EDIT_X, self.position.x);
+        set_int_to_edit(h_wnd, IDC_EDIT_Y, self.position.y);
 
-    let pos_fixed = is_dlg_button_checked(h_wnd, IDC_RADIO_POS_PICK);
-    output.push_str(&format!("PosFixed={}\n", u8::from(pos_fixed)));
-    output.push_str(&format!("PosX={}\n", get_int_from_edit(h_wnd, IDC_EDIT_X)));
-    output.push_str(&format!("PosY={}\n", get_int_from_edit(h_wnd, IDC_EDIT_Y)));
+        // Hotkey settings to global state
+        STATE.current_hotkey.vk = VIRTUAL_KEY(self.hotkey.vk);
+        STATE.current_hotkey.modifiers = HOT_KEY_MODIFIERS(self.hotkey.modifiers);
 
-    output.push_str(&format!("HotkeyVk={}\n", { let vk = STATE.current_hotkey.vk.0; vk }));
-    output.push_str(&format!("HotkeyMods={}\n", { let mods = STATE.current_hotkey.modifiers.0; mods }));
-    output.push_str(&format!("SuppressAdminPopup={}\n", u8::from(STATE.suppress_admin_popup)));
-    output.push_str(&format!("SafetyDisableEnabled={}\n", u8::from(STATE.safety_disable_enabled)));
-
-    if let Ok(mut file) = File::create(CONFIG_FILE) {
-        let _ = file.write_all(output.as_bytes());
+        // Preferences to global state
+        STATE.suppress_admin_popup = self.preferences.suppress_admin_popup;
+        STATE.safety_disable_enabled = self.preferences.safety_disable_enabled;
     }
 }
 
-unsafe fn load_settings() {
-    // Don't load settings if using default mode
+impl AppSettings {
+    /// Serialize settings to the sectioned file format
+    fn serialize(&self) -> String {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let mut output = String::with_capacity(1024);
+        output.push_str(&format!("# AutoClicker Settings v{}\n", self.version));
+        output.push_str(&format!("# Generated at: {}\n\n", timestamp));
+
+        // Timing section
+        output.push_str("[timing]\n");
+        output.push_str(&format!("hours={}\n", self.timing.hours));
+        output.push_str(&format!("minutes={}\n", self.timing.minutes));
+        output.push_str(&format!("seconds={}\n", self.timing.seconds));
+        output.push_str(&format!("milliseconds={}\n\n", self.timing.milliseconds));
+
+        // Random section
+        output.push_str("[random]\n");
+        output.push_str(&format!("enabled={}\n", if self.random.enabled { 1 } else { 0 }));
+        output.push_str(&format!("offset_ms={}\n", self.random.offset_ms));
+        output.push_str(&format!("allow_increment={}\n", if self.random.allow_increment { 1 } else { 0 }));
+        output.push_str(&format!("allow_decrement={}\n\n", if self.random.allow_decrement { 1 } else { 0 }));
+
+        // Behavior section
+        output.push_str("[behavior]\n");
+        output.push_str(&format!("mouse_button={}\n", self.behavior.mouse_button));
+        output.push_str(&format!("click_type={}\n\n", self.behavior.click_type));
+
+        // Repeat section
+        output.push_str("[repeat]\n");
+        match self.repeat.mode {
+            RepeatMode::UntilStopped => output.push_str("mode=until_stopped\n"),
+            RepeatMode::Times => {
+                output.push_str("mode=times\n");
+                output.push_str(&format!("count={}\n", self.repeat.count));
+            },
+            RepeatMode::TimeDuration => {
+                output.push_str("mode=time_duration\n");
+                output.push_str(&format!("duration_seconds={:.2}\n", self.repeat.duration_seconds));
+            },
+            RepeatMode::WhileHeld => output.push_str("mode=while_held\n"),
+        }
+        output.push('\n');
+
+        // Position section
+        output.push_str("[position]\n");
+        output.push_str(&format!("use_fixed_position={}\n", if self.position.use_fixed_position { 1 } else { 0 }));
+        output.push_str(&format!("x={}\n", self.position.x));
+        output.push_str(&format!("y={}\n\n", self.position.y));
+
+        // Hotkey section
+        output.push_str("[hotkey]\n");
+        output.push_str(&format!("vk={}\n", self.hotkey.vk));
+        output.push_str(&format!("modifiers={}\n\n", self.hotkey.modifiers));
+
+        // Preferences section
+        output.push_str("[preferences]\n");
+        output.push_str(&format!("suppress_admin_popup={}\n", if self.preferences.suppress_admin_popup { 1 } else { 0 }));
+        output.push_str(&format!("safety_disable_enabled={}\n", if self.preferences.safety_disable_enabled { 1 } else { 0 }));
+
+        output
+    }
+
+    /// Deserialize settings from the file format with validation
+    fn deserialize(content: &str) -> Result<Self, String> {
+        let mut settings = Self::default();
+        let mut current_section = String::new();
+
+        for line in content.lines() {
+            let line = line.trim();
+
+            // Skip empty lines and comments
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+
+            // Section headers
+            if line.starts_with('[') && line.ends_with(']') {
+                current_section = line[1..line.len()-1].to_string();
+                continue;
+            }
+
+            // Parse key=value pairs
+            if let Some((key, value)) = line.split_once('=') {
+                let key = key.trim();
+                let value = value.trim();
+
+                match current_section.as_str() {
+                    "timing" => parse_timing_settings(&mut settings.timing, key, value)?,
+                    "random" => parse_random_settings(&mut settings.random, key, value)?,
+                    "behavior" => parse_behavior_settings(&mut settings.behavior, key, value)?,
+                    "repeat" => parse_repeat_settings(&mut settings.repeat, key, value)?,
+                    "position" => parse_position_settings(&mut settings.position, key, value)?,
+                    "hotkey" => parse_hotkey_settings(&mut settings.hotkey, key, value)?,
+                    "preferences" => parse_preferences_settings(&mut settings.preferences, key, value)?,
+                    _ => {} // Unknown section, skip
+                }
+            }
+        }
+
+        Ok(settings)
+    }
+}
+
+// --- Persistence Functions ---
+
+/// Save settings with atomic write and backup recovery
+unsafe fn save_settings() {
     if USE_DEFAULT_SETTINGS {
         return;
     }
-    
-    let mut file = match File::open(CONFIG_FILE) {
-        Ok(f) => f,
-        Err(_) => return,
-    };
-    let mut contents = String::new();
-    if file.read_to_string(&mut contents).is_err() { return; }
+
+    let h_wnd = STATE.h_main_wnd;
+    let settings = AppSettings::from_ui(h_wnd);
+    let content = settings.serialize();
+
+    // Atomic save: write to temp file then rename
+    let temp_file = format!("{}.tmp", CONFIG_FILE);
+    let backup_file = format!("{}.backup", CONFIG_FILE);
+
+    // First, backup existing file if it exists
+    if std::path::Path::new(CONFIG_FILE).exists() {
+        if let Err(e) = std::fs::copy(CONFIG_FILE, &backup_file) {
+            eprintln!("Failed to create backup: {:?}", e);
+            // Continue anyway - we still want to save
+        }
+    }
+
+    // Write to temporary file
+    match File::create(&temp_file) {
+        Ok(mut file) => {
+            if file.write_all(content.as_bytes()).is_ok() {
+                // Atomic rename - this is guaranteed to be atomic on most filesystems
+                if std::fs::rename(&temp_file, CONFIG_FILE).is_ok() {
+                    // Success - clean up temp file if it somehow still exists
+                    let _ = std::fs::remove_file(&temp_file);
+                } else {
+                    eprintln!("Failed to rename temp file to {}", CONFIG_FILE);
+                    // Try to restore from backup
+                    if std::path::Path::new(&backup_file).exists() {
+                        let _ = std::fs::copy(&backup_file, CONFIG_FILE);
+                    }
+                }
+            } else {
+                eprintln!("Failed to write settings to temp file");
+                // Clean up temp file
+                let _ = std::fs::remove_file(&temp_file);
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to create temp file: {:?}", e);
+        }
+    }
+}
+
+/// Load settings with fallback and validation
+unsafe fn load_settings() {
+    if USE_DEFAULT_SETTINGS {
+        return;
+    }
 
     let h_wnd = STATE.h_main_wnd;
 
-    for line in contents.lines() {
-        if let Some((key, val_str)) = line.split_once('=') {
-            let val = val_str.parse::<i32>().unwrap_or(0);
-            match key {
-                "IntervalH" => set_int_to_edit(h_wnd, IDC_EDIT_HOURS, val),
-                "IntervalM" => set_int_to_edit(h_wnd, IDC_EDIT_MINS, val),
-                "IntervalS" => set_int_to_edit(h_wnd, IDC_EDIT_SECS, val),
-                "IntervalMs" => set_int_to_edit(h_wnd, IDC_EDIT_MILLIS, val),
-                "RandomCheck" => check_dlg_button(h_wnd, IDC_CHECK_RANDOM, val != 0),
-                "RandomVal" => set_int_to_edit(h_wnd, IDC_EDIT_RANDOM, val),
-                "MouseBtn" => { SendMessageW(GetDlgItem(h_wnd, IDC_COMBO_MOUSE_BTN), CB_SETCURSEL, WPARAM(val as usize), LPARAM(0)); },
-                "ClickType" => { SendMessageW(GetDlgItem(h_wnd, IDC_COMBO_CLICK_TYPE), CB_SETCURSEL, WPARAM(val as usize), LPARAM(0)); },
-                "RepeatCheck" => {
-                    let id = if val != 0 { IDC_RADIO_REPEAT_TIMES } else { IDC_RADIO_REPEAT_UNTIL };
-                    check_radio_button(h_wnd, IDC_RADIO_REPEAT_TIMES, IDC_RADIO_REPEAT_UNTIL, id);
-                },
-                "RepeatCount" => set_int_to_edit(h_wnd, IDC_EDIT_REPEAT_COUNT, val),
-                "RepeatTimeCheck" => {
-                    let id = if val != 0 { IDC_RADIO_REPEAT_TIME } else { IDC_RADIO_REPEAT_UNTIL };
-                    check_radio_button(h_wnd, IDC_RADIO_REPEAT_TIME, IDC_RADIO_REPEAT_UNTIL, id);
-                },
-                "RepeatTime" => set_float_to_edit(h_wnd, IDC_EDIT_REPEAT_TIME, val as f64),
-                "RepeatHoldCheck" => {
-                    let id = if val != 0 { IDC_RADIO_REPEAT_HOLD } else { IDC_RADIO_REPEAT_UNTIL };
-                    check_radio_button(h_wnd, IDC_RADIO_REPEAT_HOLD, IDC_RADIO_REPEAT_UNTIL, id);
-                },
-                "PosFixed" => {
-                    let id = if val != 0 { IDC_RADIO_POS_PICK } else { IDC_RADIO_POS_CURRENT };
-                    check_radio_button(h_wnd, IDC_RADIO_POS_CURRENT, IDC_RADIO_POS_PICK, id);
-                    EnableWindow(GetDlgItem(h_wnd, IDC_BTN_PICK_LOC), if val != 0 { TRUE } else { FALSE });
-                },
-                "PosX" => set_int_to_edit(h_wnd, IDC_EDIT_X, val),
-                "PosY" => set_int_to_edit(h_wnd, IDC_EDIT_Y, val),
-                "HotkeyVk" => STATE.current_hotkey.vk = VIRTUAL_KEY(val as u16),
-                "HotkeyMods" => STATE.current_hotkey.modifiers = HOT_KEY_MODIFIERS(val as u32),
-                "SuppressAdminPopup" => STATE.suppress_admin_popup = val != 0,
-                "SafetyDisableEnabled" => STATE.safety_disable_enabled = val != 0,
-                _ => {}
+    // Try to load settings from main file, then backup, then use defaults
+    let settings = if let Ok(content) = std::fs::read_to_string(CONFIG_FILE) {
+        match AppSettings::deserialize(&content) {
+            Ok(settings) => {
+                println!("Loaded settings from {}", CONFIG_FILE);
+                settings
+            }
+            Err(e) => {
+                eprintln!("Failed to parse {}: {}. Trying backup file.", CONFIG_FILE, e);
+                // Try backup file
+                let backup_file = format!("{}.backup", CONFIG_FILE);
+                if let Ok(backup_content) = std::fs::read_to_string(&backup_file) {
+                    match AppSettings::deserialize(&backup_content) {
+                        Ok(settings) => {
+                            println!("Loaded settings from backup {}", backup_file);
+                            settings
+                        }
+                        Err(backup_e) => {
+                            eprintln!("Backup file also corrupt: {}. Using defaults.", backup_e);
+                            AppSettings::default()
+                        }
+                    }
+                } else {
+                    eprintln!("No backup file found. Using defaults.");
+                    AppSettings::default()
+                }
             }
         }
-    }
+    } else {
+        // No main file, try backup
+        let backup_file = format!("{}.backup", CONFIG_FILE);
+        if let Ok(backup_content) = std::fs::read_to_string(&backup_file) {
+            match AppSettings::deserialize(&backup_content) {
+                Ok(settings) => {
+                    println!("Loaded settings from backup {}", backup_file);
+                    settings
+                }
+                Err(e) => {
+                    eprintln!("Backup file corrupt: {}. Using defaults.", e);
+                    AppSettings::default()
+                }
+            }
+        } else {
+            println!("No settings file found. Using defaults.");
+            AppSettings::default()
+        }
+    };
+
+    // Apply loaded settings to UI
+    settings.to_ui(h_wnd);
     update_start_button_text();
+
+    // Update global state from settings
+    STATE.suppress_admin_popup = settings.preferences.suppress_admin_popup;
+    STATE.safety_disable_enabled = settings.preferences.safety_disable_enabled;
+}
+
+// --- Parsing Helper Functions ---
+
+fn clamp<T: PartialOrd>(value: T, min: T, max: T) -> T {
+    if value < min { min }
+    else if value > max { max }
+    else { value }
+}
+
+fn clamp_float(value: f64, min: f64, max: f64) -> f64 {
+    if value < min { min }
+    else if value > max { max }
+    else { value }
+}
+
+fn parse_timing_settings(timing: &mut TimingSettings, key: &str, value: &str) -> Result<(), String> {
+    match key {
+        "hours" => timing.hours = clamp(parse_u32(value)?, 0, 23),
+        "minutes" => timing.minutes = clamp(parse_u32(value)?, 0, 59),
+        "seconds" => timing.seconds = clamp(parse_u32(value)?, 0, 59),
+        "milliseconds" => timing.milliseconds = clamp(parse_u32(value)?, 0, 999),
+        _ => {}
+    }
+    Ok(())
+}
+
+fn parse_random_settings(random: &mut RandomSettings, key: &str, value: &str) -> Result<(), String> {
+    match key {
+        "enabled" => random.enabled = parse_bool(value)?,
+        "offset_ms" => random.offset_ms = clamp(parse_u32(value)?, 0, 1000),
+        "allow_increment" => random.allow_increment = parse_bool(value)?,
+        "allow_decrement" => random.allow_decrement = parse_bool(value)?,
+        _ => {}
+    }
+    Ok(())
+}
+
+fn parse_behavior_settings(behavior: &mut BehaviorSettings, key: &str, value: &str) -> Result<(), String> {
+    match key {
+        "mouse_button" => behavior.mouse_button = clamp(parse_u32(value)?, 0, 2),
+        "click_type" => behavior.click_type = clamp(parse_u32(value)?, 0, 1),
+        _ => {}
+    }
+    Ok(())
+}
+
+fn parse_repeat_settings(repeat: &mut RepeatSettings, key: &str, value: &str) -> Result<(), String> {
+    match key {
+        "mode" => {
+            repeat.mode = match value {
+                "until_stopped" => RepeatMode::UntilStopped,
+                "times" => RepeatMode::Times,
+                "time_duration" => RepeatMode::TimeDuration,
+                "while_held" => RepeatMode::WhileHeld,
+                _ => RepeatMode::UntilStopped, // Default fallback
+            };
+        }
+        "count" => repeat.count = clamp(parse_u32(value)?, 1, 999999),
+        "duration_seconds" => repeat.duration_seconds = clamp_float(parse_f64(value)?, 0.1, 999.9),
+        _ => {}
+    }
+    Ok(())
+}
+
+fn parse_position_settings(position: &mut PositionSettings, key: &str, value: &str) -> Result<(), String> {
+    match key {
+        "use_fixed_position" => position.use_fixed_position = parse_bool(value)?,
+        "x" => position.x = parse_i32(value)?,
+        "y" => position.y = parse_i32(value)?,
+        _ => {}
+    }
+    Ok(())
+}
+
+fn parse_hotkey_settings(hotkey: &mut HotkeySettings, key: &str, value: &str) -> Result<(), String> {
+    match key {
+        "vk" => hotkey.vk = parse_u16(value)?,
+        "modifiers" => hotkey.modifiers = parse_u32(value)?,
+        _ => {}
+    }
+    Ok(())
+}
+
+fn parse_preferences_settings(preferences: &mut PreferencesSettings, key: &str, value: &str) -> Result<(), String> {
+    match key {
+        "suppress_admin_popup" => preferences.suppress_admin_popup = parse_bool(value)?,
+        "safety_disable_enabled" => preferences.safety_disable_enabled = parse_bool(value)?,
+        _ => {}
+    }
+    Ok(())
+}
+
+// --- Safe Parsing Functions ---
+
+fn parse_bool(value: &str) -> Result<bool, String> {
+    match value {
+        "1" | "true" => Ok(true),
+        "0" | "false" => Ok(false),
+        _ => Err(format!("Invalid boolean value: {}", value))
+    }
+}
+
+fn parse_u16(value: &str) -> Result<u16, String> {
+    value.parse::<u16>().map_err(|_| format!("Invalid u16 value: {}", value))
+}
+
+fn parse_u32(value: &str) -> Result<u32, String> {
+    value.parse::<u32>().map_err(|_| format!("Invalid u32 value: {}", value))
+}
+
+fn parse_i32(value: &str) -> Result<i32, String> {
+    value.parse::<i32>().map_err(|_| format!("Invalid i32 value: {}", value))
+}
+
+fn parse_f64(value: &str) -> Result<f64, String> {
+    value.parse::<f64>().map_err(|_| format!("Invalid f64 value: {}", value))
 }
 
 // --- Ultra-Performance Clicker Logic ---
@@ -871,7 +1381,24 @@ unsafe fn clicker_loop(
 
         let mut current_sleep_ns = target_delay_ns;
         if use_random && random_offset > 0 {
-            let random_ns = simd_rng.as_mut().unwrap().gen_range(-(random_range_ns as i64), random_range_ns as i64);
+            // Get checkbox states for random direction control
+            let allow_increment = is_dlg_button_checked(STATE.h_main_wnd, IDC_CHECK_RANDOM_INCREMENT);
+            let allow_decrement = is_dlg_button_checked(STATE.h_main_wnd, IDC_CHECK_RANDOM_DECREMENT);
+
+            let random_ns = if allow_increment && allow_decrement {
+                // Both allowed - use full range (default behavior)
+                simd_rng.as_mut().unwrap().gen_range(-(random_range_ns as i64), random_range_ns as i64)
+            } else if allow_increment {
+                // Only increment allowed - use positive range only
+                simd_rng.as_mut().unwrap().gen_range(0, random_range_ns as i64)
+            } else if allow_decrement {
+                // Only decrement allowed - use negative range only
+                simd_rng.as_mut().unwrap().gen_range(-(random_range_ns as i64), 0)
+            } else {
+                // Neither allowed - no random offset
+                0
+            };
+
             current_sleep_ns = (target_delay_ns as i64 + random_ns) as u64;
         }
 
@@ -938,10 +1465,6 @@ unsafe fn toggle_start_stop() {
     if currently_running {
         IS_RUNNING.store(false, Ordering::Relaxed);
         HOTKEY_HELD.store(false, Ordering::Relaxed);
-        
-        // Don't clean up hotkey tracker hook here - it needs to stay active
-        // to track key releases for repeat while held functionality
-        // The hook will be cleaned up in WM_DESTROY
         
         // Don't block the UI thread
         if let Ok(mut handle_lock) = CLICKER_THREAD_HANDLE.try_lock() {
@@ -1117,7 +1640,8 @@ extern "system" fn mouse_hook_proc(n_code: i32, wparam: WPARAM, lparam: LPARAM) 
                 set_int_to_edit(STATE.h_main_wnd, IDC_EDIT_Y, y);
                 
                 // Manually check radio button
-                check_radio_button(STATE.h_main_wnd, IDC_RADIO_POS_CURRENT, IDC_RADIO_POS_PICK, IDC_RADIO_POS_PICK);
+                check_radio_button_individual(STATE.h_main_wnd, IDC_RADIO_POS_CURRENT, false);
+                check_radio_button_individual(STATE.h_main_wnd, IDC_RADIO_POS_PICK, true);
                 EnableWindow(GetDlgItem(STATE.h_main_wnd, IDC_BTN_PICK_LOC), TRUE);
 
                 save_settings();
@@ -1541,6 +2065,13 @@ unsafe fn create_ui(hwnd: HWND) {
     create_ctrl(WC_BUTTON, w!("Random offset"), BS_AUTOCHECKBOX as u32, 50, 62, 120, 20, hwnd, IDC_CHECK_RANDOM);
     create_ctrl(WC_EDIT, w!("40"), WS_BORDER.0 | ES_NUMBER as u32 | ES_RIGHT as u32, 170, 62, 50, 22, hwnd, IDC_EDIT_RANDOM);
     create_ctrl(WC_STATIC, w!("milliseconds"), SS_LEFT as u32, 225, 65, 80, 20, hwnd, -1);
+
+    // Random offset direction controls
+    create_ctrl(WC_BUTTON, w!("Allow increment"), BS_AUTOCHECKBOX as u32, 50, 87, 120, 20, hwnd, IDC_CHECK_RANDOM_INCREMENT);
+    create_ctrl(WC_BUTTON, w!("Allow decrement"), BS_AUTOCHECKBOX as u32, 180, 87, 120, 20, hwnd, IDC_CHECK_RANDOM_DECREMENT);
+    // Set default state - both checked
+    check_dlg_button(hwnd, IDC_CHECK_RANDOM_INCREMENT, true);
+    check_dlg_button(hwnd, IDC_CHECK_RANDOM_DECREMENT, true);
 
     // Options - Increased width for better layout
     create_ctrl(WC_BUTTON, w!("Click options"), WS_GROUP.0 | BS_GROUPBOX as u32, 10, 100, 275, 90, hwnd, -1);
