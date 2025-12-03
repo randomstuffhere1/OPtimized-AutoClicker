@@ -2,3 +2,5 @@
 autoclicker_settings.dat
 *.exe
 *.pdb
+autoclicker_settings.toml
+autoclicker_settings.toml.backup

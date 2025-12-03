@@ -101,6 +101,28 @@ In default mode:
 * Window title shows "(Default Mode)"
 * All settings start with hardcoded defaults (100ms interval, Left button, Single click, etc.)
 
+## Console Mode
+
+By default, the application detaches from the console window for a cleaner startup experience. If you want to keep the console window attached (useful for debugging), use the console flag:
+```bash
+# Launch with console window attached
+rust_autoclicker.exe --console
+
+# or
+rust_autoclicker.exe -c
+```
+If you want to run the program directly, just compile and run:
+```bash
+# Build and run release version
+cargo run --release -- --console
+```
+In console mode:
+
+* The console window remains attached and visible
+* Console output (if any) will be displayed
+* Useful for debugging or monitoring the application
+* Window title shows normal title (no special indicator)
+
 ## Repeat While Held Mode
 
 The "Repeat while held" option lets you click continuously as long as you hold the hotkey:

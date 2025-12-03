@@ -291,6 +291,7 @@ impl Default for AppSettings {
 
 // --- Global State ---
 static mut USE_DEFAULT_SETTINGS: bool = false;
+static mut KEEP_CONSOLE: bool = false;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct HotkeyCombo {
@@ -2261,9 +2262,14 @@ fn main() {
     unsafe {
         // Check for --default or -d flag
         USE_DEFAULT_SETTINGS = args.iter().any(|arg| arg == "--default" || arg == "-d");
-        
-        // Completely detach from console window on startup
-        let _ = FreeConsole();
+
+        // Check for --console or -c flag
+        KEEP_CONSOLE = args.iter().any(|arg| arg == "--console" || arg == "-c");
+
+        // Completely detach from console window on startup (unless --console/-c is specified)
+        if !KEEP_CONSOLE {
+            let _ = FreeConsole();
+        }
 
         let icex = INITCOMMONCONTROLSEX {
             dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
