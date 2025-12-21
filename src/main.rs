@@ -5,6 +5,7 @@ use std::time::Duration;
 use std::fs::File;
 use std::io::Write;
 
+#[allow(unused_imports)]
 use windows::core::{PCWSTR, w};
 
 // Macro to create wide strings - wraps the w function
