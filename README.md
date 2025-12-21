@@ -8,6 +8,7 @@ A fast, ultra-precise auto clicker of Rust for Windows. It features advanced tim
 * **Ultra-Precise Timing**: Employs CPU-specific optimizations and high-resolution timers for sub-millisecond accuracy
 * **Multiple Click Types**: Single click, double click support
 * **Mouse Button Support**: Left, right, and middle mouse buttons
+* **Keyboard Click Support**: Press keyboard keys instead of mouse buttons
 * **Flexible Intervals**: Define time in hours, minutes, seconds, and milliseconds
 * **Random Intervals**: Random intervals can be introduced into click intervals for natural behavior
 * **Position Control**: Click at the current cursor position or fixed coordinates
@@ -72,12 +73,26 @@ You can download pre-compiled binaries directly from the Github Actions workflow
 1. **Launch the Application**: Execute 'rust_autoclicker.exe' (usually found in `target/release` if you built it yourself)
 2. **Configure Settings**:
 	* Define the click interval by filling in the hours, minutes, seconds, and milliseconds fields
-	* Choose the mouse button (Left, Right, or Middle)
-	* Select the click type (Single, Double)
+	* Choose between mouse or keyboard input:
+		* **Mouse Mode**: Choose the mouse button (Left, Right, or Middle) and click type (Single, Double)
+		* **Keyboard Mode**: Check "Use keyboard key" and click the button to select which key to press
 	* Configure the repeating options (Finite count, time duration, repeat while held, or indefinite)
-	* Set the click position (Current cursor or fixed coordinates)
+	* Set the click position (Current cursor or fixed coordinates) - ignored in keyboard mode
 3. **Start Clicking**: Click on the "Start" button or press the global hotkey (default: F2)
 4. **Stop Clicking**: Click on the "Stop" button or press the same hotkey
+
+### Keyboard Clicking
+
+To use keyboard key pressing instead of mouse clicking:
+
+1. Check the "Use keyboard key" checkbox
+2. Click the keyboard key button (shows default key: Space)
+3. Press any key when prompted to select it
+4. The selected key will be displayed on the button
+5. Configure your interval and repeat settings
+6. Start clicking - the selected key will be pressed automatically
+
+**Note**: Keyboard mode always uses single clicks (no double-click delays) and ignores position settings.
 
 ## Default Mode
 
@@ -170,6 +185,7 @@ The user's settings get saved automatically to `autoclicker_settings.dat` placed
 * Interval settings (hours, minutes, seconds, milliseconds)
 * Randomization settings
 * Mouse button and click type preferences
+* Keyboard mode settings (enabled/disabled, selected key)
 * Repeat options (finite count, time duration, repeat while held, or indefinite)
 * Time duration settings
 * Fixed position coordinates
@@ -252,6 +268,7 @@ This is my personal project which primarily deals with performance optimization 
 
 ## Version History
 
+* **v2.1.2 (Minor)**: Added keyboard clicking support - press keyboard keys instead of mouse buttons
 * **v2.1.1 (Minor)**: Added safety disable feature - automatically stops clicking when mouse appears stuck in corner
 * **v2.1.0 (Minor)**: Added repeat while held functionality - click continuously while hotkey is held down
 * **v2.0.0 (Major)**: Added time-based repeat functionality - click for a specified duration

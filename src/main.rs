@@ -37,18 +37,15 @@ use windows::Win32::UI::Controls::{
     BST_CHECKED, BST_UNCHECKED
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    RegisterHotKey, SendInput, UnregisterHotKey, INPUT, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, 
-    MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, 
-    MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_ABSOLUTE, VIRTUAL_KEY, 
-    VK_F1, VK_F2, VK_F24, VK_MENU, VK_SHIFT, VK_CONTROL,
-    HOT_KEY_MODIFIERS, EnableWindow,
+    EnableWindow, HOT_KEY_MODIFIERS, INPUT, INPUT_MOUSE, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS,
+    MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, RegisterHotKey, SendInput, UnregisterHotKey, VIRTUAL_KEY, VK_CONTROL, VK_F1, VK_F2, VK_F24, VK_MENU, VK_SHIFT, VK_SPACE
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, 
     GetClientRect, GetCursorPos, GetDlgItem, GetMessageW, GetSystemMetrics, GetWindowRect, GetWindowTextLengthW, 
     GetWindowTextW, LoadCursorW, LoadIconW, LoadImageW, PostQuitMessage, RegisterClassExW, 
     SendMessageW, SetCursorPos, SetForegroundWindow, SetWindowPos, SetWindowTextW, 
-    ShowWindow, TranslateMessage, SW_RESTORE,
+    ShowWindow, TranslateMessage, SW_HIDE, SW_RESTORE, SW_SHOW,
     SetWindowsHookExW, UnhookWindowsHookEx,
     BS_AUTOCHECKBOX, BS_AUTORADIOBUTTON, BS_GROUPBOX, BS_PUSHBUTTON, 
     CB_ADDSTRING, CB_GETCURSEL, CB_SETCURSEL, CBS_DROPDOWNLIST, CS_HREDRAW, CS_VREDRAW, 
@@ -79,7 +76,7 @@ use std::env;
 // --- Constants ---
 const ID_HOTKEY_GLOBAL: i32 = 1;
 
-const VERSION: &str = "2.1.1";
+const VERSION: &str = "2.1.2";
 
 // Control IDs
 const IDC_EDIT_HOURS: i32 = 101;
@@ -110,6 +107,12 @@ const IDC_RADIO_REPEAT_HOLD: i32 = 123;
 
 const IDC_CHECK_RANDOM_INCREMENT: i32 = 124;
 const IDC_CHECK_RANDOM_DECREMENT: i32 = 125;
+
+const IDC_CHECK_USE_KEYBOARD: i32 = 126;
+const IDC_BTN_KEYBOARD_KEY: i32 = 127;
+const IDC_STATIC_MOUSE_LABEL: i32 = 128;
+const IDC_STATIC_KEY_LABEL: i32 = 129;
+const IDC_STATIC_CLICK_TYPE_LABEL: i32 = 130;
 
 const IDC_HK_BTN_SET: i32 = 201;
 const IDC_HK_BTN_DISPLAY: i32 = 202;
@@ -173,6 +176,8 @@ impl Default for RandomSettings {
 struct BehaviorSettings {
     mouse_button: u32,  // 0=Left, 1=Right, 2=Middle
     click_type: u32,    // 0=Single, 1=Double
+    use_keyboard: bool, // true=use keyboard key, false=use mouse button
+    keyboard_key: u16,  // virtual key code for keyboard mode
 }
 
 impl Default for BehaviorSettings {
@@ -180,6 +185,8 @@ impl Default for BehaviorSettings {
         Self {
             mouse_button: 0,
             click_type: 0,
+            use_keyboard: false,
+            keyboard_key: VK_SPACE.0 as u16,
         }
     }
 }
@@ -321,6 +328,7 @@ struct AppState {
     
     current_hotkey: HotkeyCombo,
     temp_hotkey: HotkeyCombo,
+    current_keyboard_key: VIRTUAL_KEY,
     
     is_listening_for_key: bool,
     is_picking_location: bool,
@@ -339,6 +347,7 @@ static mut STATE: AppState = AppState {
     h_hotkey_tracker_hook: HHOOK(0),
     current_hotkey: HotkeyCombo::none(),
     temp_hotkey: HotkeyCombo::none(),
+    current_keyboard_key: VK_SPACE,
     is_listening_for_key: false,
     is_picking_location: false,
     suppress_admin_popup: false,
@@ -710,6 +719,8 @@ impl AppSettings {
             SendMessageW(GetDlgItem(h_wnd, IDC_COMBO_CLICK_TYPE), CB_GETCURSEL, WPARAM(0), LPARAM(0)).0 as u32,
             0, 1
         );
+        settings.behavior.use_keyboard = is_dlg_button_checked(h_wnd, IDC_CHECK_USE_KEYBOARD);
+        settings.behavior.keyboard_key = STATE.current_keyboard_key.0 as u16;
 
         // Repeat settings - fix: properly handle all repeat modes
         if is_dlg_button_checked(h_wnd, IDC_RADIO_REPEAT_TIMES) {
@@ -757,6 +768,16 @@ impl AppSettings {
         // Behavior settings
         SendMessageW(GetDlgItem(h_wnd, IDC_COMBO_MOUSE_BTN), CB_SETCURSEL, WPARAM(self.behavior.mouse_button as usize), LPARAM(0));
         SendMessageW(GetDlgItem(h_wnd, IDC_COMBO_CLICK_TYPE), CB_SETCURSEL, WPARAM(self.behavior.click_type as usize), LPARAM(0));
+        check_dlg_button(h_wnd, IDC_CHECK_USE_KEYBOARD, self.behavior.use_keyboard);
+        STATE.current_keyboard_key = VIRTUAL_KEY(self.behavior.keyboard_key);
+        
+        // Update keyboard button text
+        let key_name = get_key_name(STATE.current_keyboard_key);
+        let key_name_w = to_wstring(key_name);
+        let _ = SetWindowTextW(GetDlgItem(h_wnd, IDC_BTN_KEYBOARD_KEY), PCWSTR(key_name_w.as_ptr()));
+        
+        // Update UI visibility based on keyboard mode
+        update_keyboard_mouse_ui(h_wnd, self.behavior.use_keyboard);
 
         // FIXED: Repeat settings - individually set each radio button to avoid range issues
         // First, uncheck all repeat radio buttons
@@ -830,7 +851,9 @@ impl AppSettings {
         // Behavior section
         output.push_str("[behavior]\n");
         output.push_str(&format!("mouse_button={}\n", self.behavior.mouse_button));
-        output.push_str(&format!("click_type={}\n\n", self.behavior.click_type));
+        output.push_str(&format!("click_type={}\n", self.behavior.click_type));
+        output.push_str(&format!("use_keyboard={}\n", if self.behavior.use_keyboard { 1 } else { 0 }));
+        output.push_str(&format!("keyboard_key={}\n\n", self.behavior.keyboard_key));
 
         // Repeat section
         output.push_str("[repeat]\n");
@@ -1064,6 +1087,8 @@ fn parse_behavior_settings(behavior: &mut BehaviorSettings, key: &str, value: &s
     match key {
         "mouse_button" => behavior.mouse_button = clamp(parse_u32(value)?, 0, 2),
         "click_type" => behavior.click_type = clamp(parse_u32(value)?, 0, 1),
+        "use_keyboard" => behavior.use_keyboard = parse_u32(value)? != 0,
+        "keyboard_key" => behavior.keyboard_key = parse_u32(value)? as u16,
         _ => {}
     }
     Ok(())
@@ -1150,7 +1175,8 @@ unsafe fn clicker_loop(
     repeat_time: bool, repeat_duration_seconds: f64,
     repeat_while_held: bool,
     btn_idx: i32, type_idx: i32,
-    use_fixed_pos: bool, fixed_x: i32, fixed_y: i32
+    use_fixed_pos: bool, fixed_x: i32, fixed_y: i32,
+    use_keyboard: bool, keyboard_key: u16
 ) {
     let hwnd = HWND(hwnd);
 
@@ -1173,50 +1199,73 @@ unsafe fn clicker_loop(
 
     let mut simd_rng = if use_random { Some(FastRng::new()) } else { None };
     
-    let (btn_down, btn_up) = match btn_idx {
-        0 => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
-        1 => (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
-        _ => (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
-    };
-    
-    let (screen_width, screen_height) = if use_fixed_pos {
-        (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN))
-    } else { (0, 0) };
-    
-    let (norm_x, norm_y) = if use_fixed_pos && screen_width > 0 && screen_height > 0 {
-        ((fixed_x * 65535) / screen_width, (fixed_y * 65535) / screen_height)
-    } else { (0, 0) };
-    
     let input_size = std::mem::size_of::<INPUT>() as i32;
+    
+    // Setup inputs based on whether we're using keyboard or mouse
+    let (keyboard_inputs, mouse_fixed_inputs, mouse_current_inputs) = if use_keyboard {
+        // Keyboard inputs
+        let mut inputs = [INPUT::default(), INPUT::default()];
+        inputs[0].r#type = INPUT_KEYBOARD;
+        inputs[0].Anonymous.ki.wVk = VIRTUAL_KEY(keyboard_key);
+        inputs[0].Anonymous.ki.dwFlags = KEYBD_EVENT_FLAGS(0);
+        inputs[0].Anonymous.ki.wScan = 0;
+        inputs[0].Anonymous.ki.time = 0;
+        inputs[0].Anonymous.ki.dwExtraInfo = 0;
+        
+        inputs[1].r#type = INPUT_KEYBOARD;
+        inputs[1].Anonymous.ki.wVk = VIRTUAL_KEY(keyboard_key);
+        inputs[1].Anonymous.ki.dwFlags = KEYBD_EVENT_FLAGS(2); // KEYEVENTF_KEYUP
+        inputs[1].Anonymous.ki.wScan = 0;
+        inputs[1].Anonymous.ki.time = 0;
+        inputs[1].Anonymous.ki.dwExtraInfo = 0;
+        
+        (Some(inputs), None, None)
+    } else {
+        // Mouse inputs
+        let (btn_down, btn_up) = match btn_idx {
+            0 => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
+            1 => (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+            _ => (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
+        };
+        
+        let (screen_width, screen_height) = if use_fixed_pos {
+            (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN))
+        } else { (0, 0) };
+        
+        let (norm_x, norm_y) = if use_fixed_pos && screen_width > 0 && screen_height > 0 {
+            ((fixed_x * 65535) / screen_width, (fixed_y * 65535) / screen_height)
+        } else { (0, 0) };
+        
+        let mouse_fixed_inputs = if use_fixed_pos {
+            let mut inputs = [INPUT::default(), INPUT::default()];
+            inputs[0].r#type = INPUT_MOUSE;
+            inputs[0].Anonymous.mi.dwFlags = btn_down | MOUSEEVENTF_ABSOLUTE;
+            inputs[0].Anonymous.mi.dx = norm_x;
+            inputs[0].Anonymous.mi.dy = norm_y;
+            inputs[1].r#type = INPUT_MOUSE;
+            inputs[1].Anonymous.mi.dwFlags = btn_up | MOUSEEVENTF_ABSOLUTE;
+            inputs[1].Anonymous.mi.dx = norm_x;
+            inputs[1].Anonymous.mi.dy = norm_y;
+            Some(inputs)
+        } else { None };
+        
+        let mouse_current_inputs = if !use_fixed_pos {
+            let mut inputs = [INPUT::default(), INPUT::default()];
+            inputs[0].r#type = INPUT_MOUSE;
+            inputs[0].Anonymous.mi.dwFlags = btn_down;
+            inputs[1].r#type = INPUT_MOUSE;
+            inputs[1].Anonymous.mi.dwFlags = btn_up;
+            Some(inputs)
+        } else { None };
+        
+        (None, mouse_fixed_inputs, mouse_current_inputs)
+    };
     
     // Adjust thresholds for precision modes
     let use_ultra_precision = total_millis < 15; // Use pure spin loop for < 15ms
     let use_high_precision = total_millis < 50;
     
     let double_click_delay_ns = 50_000_000; // 50ms
-    
-    // ... [Input struct setup code remains the same as your original] ...
-    let fixed_inputs = if use_fixed_pos {
-        let mut inputs = [INPUT::default(), INPUT::default()];
-        inputs[0].r#type = INPUT_MOUSE;
-        inputs[0].Anonymous.mi.dwFlags = btn_down | MOUSEEVENTF_ABSOLUTE;
-        inputs[0].Anonymous.mi.dx = norm_x;
-        inputs[0].Anonymous.mi.dy = norm_y;
-        inputs[1].r#type = INPUT_MOUSE;
-        inputs[1].Anonymous.mi.dwFlags = btn_up | MOUSEEVENTF_ABSOLUTE;
-        inputs[1].Anonymous.mi.dx = norm_x;
-        inputs[1].Anonymous.mi.dy = norm_y;
-        Some(inputs)
-    } else { None };
-    
-    let current_inputs = if !use_fixed_pos {
-        let mut inputs = [INPUT::default(), INPUT::default()];
-        inputs[0].r#type = INPUT_MOUSE;
-        inputs[0].Anonymous.mi.dwFlags = btn_down;
-        inputs[1].r#type = INPUT_MOUSE;
-        inputs[1].Anonymous.mi.dwFlags = btn_up;
-        Some(inputs)
-    } else { None };
 
     let mut is_running = IS_RUNNING.load(Ordering::Relaxed);
     let mut last_tsc = get_high_precision_time();
@@ -1234,11 +1283,15 @@ unsafe fn clicker_loop(
     } else { 0 };
 
     while is_running {
-        if use_fixed_pos {
+        // Use appropriate inputs based on mode
+        if use_keyboard {
+            // Keyboard mode - ignore position settings
+            SendInput(keyboard_inputs.as_ref().unwrap(), input_size);
+        } else if use_fixed_pos {
             let _ = SetCursorPos(fixed_x, fixed_y);
-            SendInput(fixed_inputs.as_ref().unwrap(), input_size);
+            SendInput(mouse_fixed_inputs.as_ref().unwrap(), input_size);
         } else {
-            SendInput(current_inputs.as_ref().unwrap(), input_size);
+            SendInput(mouse_current_inputs.as_ref().unwrap(), input_size);
         }
 
         if type_idx == 1 {
@@ -1248,8 +1301,13 @@ unsafe fn clicker_loop(
                 if click_count % 10 == 0 { is_running = IS_RUNNING.load(Ordering::Relaxed); }
             }
             if is_running {
-                if use_fixed_pos { SendInput(fixed_inputs.as_ref().unwrap(), input_size); } 
-                else { SendInput(current_inputs.as_ref().unwrap(), input_size); }
+                if use_keyboard {
+                    SendInput(keyboard_inputs.as_ref().unwrap(), input_size);
+                } else if use_fixed_pos { 
+                    SendInput(mouse_fixed_inputs.as_ref().unwrap(), input_size); 
+                } else { 
+                    SendInput(mouse_current_inputs.as_ref().unwrap(), input_size); 
+                }
             }
         }
 
@@ -1536,6 +1594,8 @@ unsafe fn toggle_start_stop() {
         let use_fixed = is_dlg_button_checked(h_wnd, IDC_RADIO_POS_PICK);
         let fx = get_int_from_edit(h_wnd, IDC_EDIT_X);
         let fy = get_int_from_edit(h_wnd, IDC_EDIT_Y);
+        let use_keyboard = is_dlg_button_checked(h_wnd, IDC_CHECK_USE_KEYBOARD);
+        let keyboard_key = STATE.current_keyboard_key.0;
 
         let hwnd_val = h_wnd.0;
 
@@ -1553,7 +1613,7 @@ unsafe fn toggle_start_stop() {
         let handle = thread::Builder::new()
             .name("ultra-precise-autoclicker".to_string())
             .spawn(move || {
-                clicker_loop(hwnd_val, h, m, s, ms, use_random, random_offset, repeat_finite, repeat_count, repeat_time, repeat_duration, repeat_while_held, btn_idx, type_idx, use_fixed, fx, fy);
+                clicker_loop(hwnd_val, h, m, s, ms, use_random, random_offset, repeat_finite, repeat_count, repeat_time, repeat_duration, repeat_while_held, btn_idx, type_idx, use_fixed, fx, fy, use_keyboard, keyboard_key);
             })
             .expect("Failed to spawn ultra-precise autoclicker thread");
 
@@ -1732,6 +1792,20 @@ extern "system" fn keyboard_hook_proc(n_code: i32, wparam: WPARAM, lparam: LPARA
                     // Update the button text in the hotkey dialog
                     if STATE.h_hotkey_wnd.0 != 0 {
                         let _ = SetWindowTextW(GetDlgItem(STATE.h_hotkey_wnd, IDC_HK_BTN_DISPLAY), PCWSTR(display_w.as_ptr()));
+                    }
+                    
+                    // Update the button text in the main window for keyboard key selection
+                    if STATE.h_main_wnd.0 != 0 && is_dlg_button_checked(STATE.h_main_wnd, IDC_CHECK_USE_KEYBOARD) {
+                        STATE.current_keyboard_key = key;
+                        let key_name = get_key_name(key);
+                        let key_name_w = to_wstring(key_name);
+                        let _ = SetWindowTextW(GetDlgItem(STATE.h_main_wnd, IDC_BTN_KEYBOARD_KEY), PCWSTR(key_name_w.as_ptr()));
+                        
+                        // Save the selected key to settings
+                        let mut settings = AppSettings::from_ui(STATE.h_main_wnd);
+                        settings.behavior.keyboard_key = key.0 as u16;
+                        settings.to_ui(STATE.h_main_wnd);
+                        save_settings();
                     }
                     
                     STATE.is_listening_for_key = false;
@@ -2075,20 +2149,33 @@ unsafe fn create_ui(hwnd: HWND) {
     check_dlg_button(hwnd, IDC_CHECK_RANDOM_DECREMENT, true);
 
     // Options - Increased width for better layout
-    create_ctrl(WC_BUTTON, w!("Click options"), WS_GROUP.0 | BS_GROUPBOX as u32, 10, 100, 275, 90, hwnd, -1);
+    create_ctrl(WC_BUTTON, w!("Click options"), WS_GROUP.0 | BS_GROUPBOX as u32, 10, 100, 275, 110, hwnd, -1);
+    
+    // Add checkbox for keyboard/mouse mode selection
+    create_ctrl(WC_BUTTON, w!("Use keyboard key"), BS_AUTOCHECKBOX as u32, 20, 120, 150, 20, hwnd, IDC_CHECK_USE_KEYBOARD);
+    
     // Pre-allocate static strings for combo boxes to avoid repeated allocations
     const MOUSE_BUTTONS: [&str; 3] = ["Left", "Right", "Middle"];
     const CLICK_TYPES: [&str; 2] = ["Single", "Double"];
     
-    create_ctrl(WC_STATIC, w!("Mouse button:"), SS_LEFT as u32, 20, 125, 90, 20, hwnd, -1);
-    let h_combo_btn = create_ctrl(WC_COMBOBOX, w!(""), CBS_DROPDOWNLIST as u32 | WS_VSCROLL.0, 110, 122, 100, 100, hwnd, IDC_COMBO_MOUSE_BTN);
+    create_ctrl(WC_STATIC, w!("Mouse button:"), SS_LEFT as u32, 20, 145, 90, 20, hwnd, IDC_STATIC_MOUSE_LABEL);
+    let h_combo_btn = create_ctrl(WC_COMBOBOX, w!(""), CBS_DROPDOWNLIST as u32 | WS_VSCROLL.0, 110, 142, 100, 100, hwnd, IDC_COMBO_MOUSE_BTN);
     for btn_name in MOUSE_BUTTONS.iter() {
         SendMessageW(h_combo_btn, CB_ADDSTRING, WPARAM(0), LPARAM(to_wstring(btn_name).as_ptr() as isize));
     }
     SendMessageW(h_combo_btn, CB_SETCURSEL, WPARAM(0), LPARAM(0));
 
-    create_ctrl(WC_STATIC, w!("Click type:"), SS_LEFT as u32, 20, 155, 90, 20, hwnd, -1);
-    let h_combo_type = create_ctrl(WC_COMBOBOX, w!(""), CBS_DROPDOWNLIST as u32 | WS_VSCROLL.0, 110, 152, 100, 100, hwnd, IDC_COMBO_CLICK_TYPE);
+    // Add keyboard key button (initially hidden)
+    let key_name = get_key_name(VIRTUAL_KEY(VK_SPACE.0 as u16));
+    create_ctrl(WC_STATIC, w!("Keyboard key:"), SS_LEFT as u32, 20, 145, 90, 20, hwnd, IDC_STATIC_KEY_LABEL);
+    let h_btn_key = create_ctrl(WC_BUTTON, PCWSTR(to_wstring(key_name).as_ptr()), WS_CHILD.0 | WS_VISIBLE.0, 110, 142, 100, 22, hwnd, IDC_BTN_KEYBOARD_KEY);
+    
+    // Initially hide keyboard controls
+    ShowWindow(GetDlgItem(hwnd, IDC_STATIC_KEY_LABEL), SW_HIDE);
+    ShowWindow(h_btn_key, SW_HIDE);
+
+    create_ctrl(WC_STATIC, w!("Click type:"), SS_LEFT as u32, 20, 175, 90, 20, hwnd, IDC_STATIC_CLICK_TYPE_LABEL);
+    let h_combo_type = create_ctrl(WC_COMBOBOX, w!(""), CBS_DROPDOWNLIST as u32 | WS_VSCROLL.0, 110, 172, 100, 100, hwnd, IDC_COMBO_CLICK_TYPE);
     for type_name in CLICK_TYPES.iter() {
         SendMessageW(h_combo_type, CB_ADDSTRING, WPARAM(0), LPARAM(to_wstring(type_name).as_ptr() as isize));
     }
@@ -2127,6 +2214,61 @@ unsafe fn create_ui(hwnd: HWND) {
     create_ctrl(WC_BUTTON, w!("Settings"), BS_PUSHBUTTON as u32, 255, 395, 180, 30, hwnd, IDC_BTN_SETTINGS);
 
     load_settings();
+    
+    // Update UI based on initial checkbox state
+    let use_keyboard = is_dlg_button_checked(hwnd, IDC_CHECK_USE_KEYBOARD);
+    update_keyboard_mouse_ui(hwnd, use_keyboard);
+}
+
+unsafe fn update_keyboard_mouse_ui(hwnd: HWND, use_keyboard: bool) {
+    // Get all the controls
+    let h_mouse_label = GetDlgItem(hwnd, IDC_STATIC_MOUSE_LABEL);
+    let h_mouse_combo = GetDlgItem(hwnd, IDC_COMBO_MOUSE_BTN);
+    let h_key_label = GetDlgItem(hwnd, IDC_STATIC_KEY_LABEL);
+    let h_key_button = GetDlgItem(hwnd, IDC_BTN_KEYBOARD_KEY);
+    let h_click_type_label = GetDlgItem(hwnd, IDC_STATIC_CLICK_TYPE_LABEL);
+    let h_click_type_combo = GetDlgItem(hwnd, IDC_COMBO_CLICK_TYPE);
+    
+    if use_keyboard {
+        // Move mouse controls off-screen and hide them
+        let _ = SetWindowPos(h_mouse_label, None, -1000, -1000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        let _ = SetWindowPos(h_mouse_combo, None, -1000, -1000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        ShowWindow(h_mouse_label, SW_HIDE);
+        ShowWindow(h_mouse_combo, SW_HIDE);
+        
+        // Hide click type controls when using keyboard
+        let _ = SetWindowPos(h_click_type_label, None, -1000, -1000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        let _ = SetWindowPos(h_click_type_combo, None, -1000, -1000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        ShowWindow(h_click_type_label, SW_HIDE);
+        ShowWindow(h_click_type_combo, SW_HIDE);
+        
+        // Force single click mode when using keyboard
+        SendMessageW(h_click_type_combo, CB_SETCURSEL, WPARAM(0), LPARAM(0));
+        
+        // Show and position keyboard controls at mouse control positions
+        ShowWindow(h_key_label, SW_SHOW);
+        ShowWindow(h_key_button, SW_SHOW);
+        let _ = SetWindowPos(h_key_label, None, 20, 145, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        let _ = SetWindowPos(h_key_button, None, 110, 142, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    } else {
+        // Move keyboard controls off-screen and hide them
+        let _ = SetWindowPos(h_key_label, None, -1000, -1000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        let _ = SetWindowPos(h_key_button, None, -1000, -1000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        ShowWindow(h_key_label, SW_HIDE);
+        ShowWindow(h_key_button, SW_HIDE);
+        
+        // Show and position mouse controls back to their original positions
+        ShowWindow(h_mouse_label, SW_SHOW);
+        ShowWindow(h_mouse_combo, SW_SHOW);
+        let _ = SetWindowPos(h_mouse_label, None, 20, 145, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        let _ = SetWindowPos(h_mouse_combo, None, 110, 142, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        
+        // Show click type controls back to their original positions
+        ShowWindow(h_click_type_label, SW_SHOW);
+        ShowWindow(h_click_type_combo, SW_SHOW);
+        let _ = SetWindowPos(h_click_type_label, None, 20, 175, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        let _ = SetWindowPos(h_click_type_combo, None, 110, 172, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
 }
 
 extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -2169,6 +2311,25 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                     IDC_BTN_HOTKEY => open_hotkey_dialog(),
                     IDC_BTN_SETTINGS => open_settings_dialog(),
                     IDC_BTN_PICK_LOC => start_pick_location(),
+                    IDC_CHECK_USE_KEYBOARD => {
+                        let use_keyboard = is_dlg_button_checked(hwnd, IDC_CHECK_USE_KEYBOARD);
+                        update_keyboard_mouse_ui(hwnd, use_keyboard);
+                        save_settings();
+                    },
+                    IDC_BTN_KEYBOARD_KEY => {
+                        // Start listening for keyboard key press
+                        STATE.is_listening_for_key = true;
+                        let _ = SetWindowTextW(GetDlgItem(hwnd, IDC_BTN_KEYBOARD_KEY), w!("Press any key..."));
+                        
+                        // Set up the keyboard hook to capture key presses globally
+                        let h_instance = HINSTANCE(GetModuleHandleW(None).unwrap_or_default().0);
+                        STATE.h_keyboard_hook = SetWindowsHookExW(
+                            WINDOWS_HOOK_ID(WH_KEYBOARD_LL.0 as i32), 
+                            Some(keyboard_hook_proc), 
+                            h_instance, 
+                            0
+                        ).unwrap_or(HHOOK(0));
+                    },
                     IDC_RADIO_POS_PICK => { EnableWindow(GetDlgItem(hwnd, IDC_BTN_PICK_LOC), TRUE); },
                     IDC_RADIO_POS_CURRENT => { EnableWindow(GetDlgItem(hwnd, IDC_BTN_PICK_LOC), FALSE); },
                     IDC_RADIO_REPEAT_HOLD => { 
