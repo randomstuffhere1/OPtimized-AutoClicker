@@ -57,16 +57,24 @@ These scripts automatically handle both debug and release builds and report succ
 
 ## Downloading Releases
 
-### Github Actions Builds
+### GitHub Releases
 
-You can download pre-compiled binaries directly from the Github Actions workflow:
+You can download pre-compiled binaries from the GitHub Releases section:
+
+1. Navigate to the "Releases" tab
+2. Download the latest release zip file (e.g., `rust-autoclicker-v2.1.2-windows.zip`)
+3. Extract the archive and run `rust_autoclicker.exe`
+
+### GitHub Actions Builds
+
+You can also download builds directly from GitHub Actions workflow:
 
 1. Navigate to the "Actions" tab
-2. Select the latest successful workflow run
+2. Select the latest successful "Release Build" workflow run
 3. Scroll down to the "Artifacts" section
 4. Download the Windows release binary
 
-**Note**: Github Actions builds are manually triggered and only compiled when a stable build is ready. These builds represent carefully vetted releases with full optimizations.
+**Note**: The Release Build workflow creates proper GitHub releases with versioned zip files containing the executable, icon, and documentation. These builds represent carefully vetted releases with full optimizations.
 
 ## Usage
 
