@@ -115,7 +115,7 @@ rust_autoclicker.exe -d
 If you want to run the program directly, just compile and run:
 ```bash
 # Build and run release version
-cargo run --release ---d
+cargo run --release -- --default
 ```
 In default mode:
 
