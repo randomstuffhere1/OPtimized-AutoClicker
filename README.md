@@ -289,7 +289,8 @@ This is my personal project which primarily deals with performance optimization 
 
 ## Version History
 
-* **v2.1.3 (Minor)**: Add configurable keyboard hold duration with UI controls. Update Rust edition from 2021 to 2024 for potentially better performance.
+* **v2.1.3b (Hotfix)**: Fixed pick location not working on some screen resolutions
+* **v2.1.3 (Minor)**: Add configurable keyboard hold duration. Update Rust edition from 2021 to 2024 for potentially better performance.
 * **v2.1.2 (Minor)**: Added keyboard clicking support - press keyboard keys instead of mouse buttons
 * **v2.1.1 (Minor)**: Added safety disable feature - automatically stops clicking when mouse appears stuck in corner
 * **v2.1.0 (Minor)**: Added repeat while held functionality - click continuously while hotkey is held down

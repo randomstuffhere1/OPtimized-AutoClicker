@@ -60,7 +60,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     BM_GETCHECK, BM_SETCHECK, 
     SM_CXSCREEN, SM_CYSCREEN,
     MessageBoxW, MB_OK, MB_ICONWARNING, MB_TOPMOST,
-    IDI_APPLICATION, IMAGE_ICON, LR_LOADFROMFILE,
+    IDI_APPLICATION, IMAGE_ICON, LR_LOADFROMFILE
 };
 use windows::Win32::System::Console::FreeConsole;
 use windows::Win32::System::Threading::{SetThreadPriority, SetPriorityClass,
@@ -1240,11 +1240,17 @@ unsafe fn clicker_loop(
         };
         
         let (screen_width, screen_height) = if use_fixed_pos {
+            // Get system metrics for the primary monitor
             (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN))
         } else { (0, 0) };
         
         let (norm_x, norm_y) = if use_fixed_pos && screen_width > 0 && screen_height > 0 {
-            ((fixed_x * 65535) / screen_width, (fixed_y * 65535) / screen_height)
+            // Normalize coordinates to 0-65535 range for MOUSEEVENTF_ABSOLUTE
+            // Add 1 to screen dimensions to handle edge cases where cursor is at exact screen boundary
+            let norm_x = ((fixed_x as i64 * 65536) / (screen_width as i64 + 1)) as i32;
+            let norm_y = ((fixed_y as i64 * 65536) / (screen_height as i64 + 1)) as i32;
+            // Clamp to valid range to prevent overflow
+            (norm_x.max(0).min(65535), norm_y.max(0).min(65535))
         } else { (0, 0) };
         
         let mouse_fixed_inputs = if use_fixed_pos {
@@ -1733,8 +1739,14 @@ extern "system" fn mouse_hook_proc(n_code: i32, wparam: WPARAM, lparam: LPARAM) 
             }
 
             if wparam.0 as u32 == WM_LBUTTONDOWN {
-                let x = p_mouse.pt.x;
-                let y = p_mouse.pt.y;
+                // Use GetCursorPos for accurate screen coordinates regardless of DPI scaling
+                let mut cursor_pos = POINT::default();
+                let (x, y) = if GetCursorPos(&mut cursor_pos).is_ok() {
+                    (cursor_pos.x, cursor_pos.y)
+                } else {
+                    // Fallback to hook coordinates if GetCursorPos fails
+                    (p_mouse.pt.x, p_mouse.pt.y)
+                };
 
                 if STATE.h_mouse_hook.0 != 0 {
                     let _ = UnhookWindowsHookEx(STATE.h_mouse_hook);
@@ -2498,7 +2510,7 @@ fn main() {
     // Parse command line arguments
     let args: Vec<String> = env::args().collect();
     
-    unsafe {
+    unsafe {        
         // Check for --default or -d flag
         USE_DEFAULT_SETTINGS = args.iter().any(|arg| arg == "--default" || arg == "-d");
 
