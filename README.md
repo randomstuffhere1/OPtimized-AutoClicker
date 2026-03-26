@@ -1,4 +1,5 @@
-# (OP)timized Auto Clicker v2.1.2
+# (OP)timized Auto Clicker v2.1.3
+
 *Like the [original](https://opautoclicker.dev/), but written in Rust!*
 
 A fast, ultra-precise auto clicker of Rust for Windows. It features advanced timing algorithms, customizable click patterns, and a native Windows GUI interface.
@@ -29,9 +30,10 @@ A fast, ultra-precise auto clicker of Rust for Windows. It features advanced tim
 
 ### Prerequisites
 
-* Rustup (https://rustup.rs/)
+* Rustup (<https://rustup.rs/>)
 
 ### Build Commands
+
 ```bash
 # Build release version
 cargo build --release
@@ -45,6 +47,7 @@ cargo test
 # Check code without building
 cargo check
 ```
+
 ### Build Scripts
 
 The project has build scripts for easy building:
@@ -62,7 +65,7 @@ These scripts automatically handle both debug and release builds and report succ
 You can download pre-compiled binaries from the GitHub Releases section:
 
 1. Navigate to the "Releases" tab
-2. Download the latest release zip file (e.g., `rust-autoclicker-v2.1.2-windows.zip`)
+2. Download the latest release zip file (e.g., `rust-autoclicker-v2.1.3-windows.zip`)
 3. Extract the archive and run `rust_autoclicker.exe`
 
 ### GitHub Actions Builds
@@ -80,14 +83,16 @@ You can also download builds directly from GitHub Actions workflow:
 
 1. **Launch the Application**: Execute 'rust_autoclicker.exe' (usually found in `target/release` if you built it yourself)
 2. **Configure Settings**:
-	* Define the click interval by filling in the hours, minutes, seconds, and milliseconds fields
-	* Choose between mouse or keyboard input:
-		* **Mouse Mode**: Choose the mouse button (Left, Right, or Middle) and click type (Single, Double)
-		* **Keyboard Mode**: Check "Use keyboard key" and click the button to select which key to press
-	* Configure the repeating options (Finite count, time duration, repeat while held, or indefinite)
-	* Set the click position (Current cursor or fixed coordinates) - ignored in keyboard mode
-3. **Start Clicking**: Click on the "Start" button or press the global hotkey (default: F2)
-4. **Stop Clicking**: Click on the "Stop" button or press the same hotkey
+
+* Define the click interval by filling in the hours, minutes, seconds, and milliseconds fields
+* Choose between mouse or keyboard input:
+* **Mouse Mode**: Choose the mouse button (Left, Right, or Middle) and click type (Single, Double)
+* **Keyboard Mode**: Check "Use keyboard key" and click the button to select which key to press
+* Configure the repeating options (Finite count, time duration, repeat while held, or indefinite)
+* Set the click position (Current cursor or fixed coordinates) - ignored in keyboard mode
+
+1. **Start Clicking**: Click on the "Start" button or press the global hotkey (default: F2)
+2. **Stop Clicking**: Click on the "Stop" button or press the same hotkey
 
 ### Keyboard Clicking
 
@@ -105,6 +110,7 @@ To use keyboard key pressing instead of mouse clicking:
 ## Default Mode
 
 For testing or clean configuration, you can launch the program in default mode:
+
 ```bash
 # Launch with default settings (no config loaded/saved)
 rust_autoclicker.exe --default
@@ -112,11 +118,14 @@ rust_autoclicker.exe --default
 # or
 rust_autoclicker.exe -d
 ```
+
 If you want to run the program directly, just compile and run:
+
 ```bash
 # Build and run release version
 cargo run --release -- --default
 ```
+
 In default mode:
 
 * Settings are NOT loaded from `autoclicker_settings.dat`
@@ -127,6 +136,7 @@ In default mode:
 ## Console Mode
 
 By default, the application detaches from the console window for a cleaner startup experience. If you want to keep the console window attached (useful for debugging), use the console flag:
+
 ```bash
 # Launch with console window attached
 rust_autoclicker.exe --console
@@ -134,11 +144,14 @@ rust_autoclicker.exe --console
 # or
 rust_autoclicker.exe -c
 ```
+
 If you want to run the program directly, just compile and run:
+
 ```bash
 # Build and run release version
 cargo run --release -- --console
 ```
+
 In console mode:
 
 * The console window remains attached and visible
@@ -276,6 +289,7 @@ This is my personal project which primarily deals with performance optimization 
 
 ## Version History
 
+* **v2.1.3 (Minor)**: Add configurable keyboard hold duration with UI controls. Update Rust edition from 2021 to 2024 for potentially better performance.
 * **v2.1.2 (Minor)**: Added keyboard clicking support - press keyboard keys instead of mouse buttons
 * **v2.1.1 (Minor)**: Added safety disable feature - automatically stops clicking when mouse appears stuck in corner
 * **v2.1.0 (Minor)**: Added repeat while held functionality - click continuously while hotkey is held down

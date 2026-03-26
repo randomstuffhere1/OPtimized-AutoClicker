@@ -77,7 +77,7 @@ use std::env;
 // --- Constants ---
 const ID_HOTKEY_GLOBAL: i32 = 1;
 
-const VERSION: &str = "2.1.2";
+const VERSION: &str = "2.1.3";
 
 // Control IDs
 const IDC_EDIT_HOURS: i32 = 101;
