@@ -114,6 +114,9 @@ const IDC_BTN_KEYBOARD_KEY: i32 = 127;
 const IDC_STATIC_MOUSE_LABEL: i32 = 128;
 const IDC_STATIC_KEY_LABEL: i32 = 129;
 const IDC_STATIC_CLICK_TYPE_LABEL: i32 = 130;
+const IDC_STATIC_HOLD_DURATION_LABEL: i32 = 131;
+const IDC_EDIT_HOLD_DURATION: i32 = 132;
+const IDC_STATIC_HOLD_DURATION_MS_LABEL: i32 = 133;
 
 const IDC_HK_BTN_SET: i32 = 201;
 const IDC_HK_BTN_DISPLAY: i32 = 202;
@@ -179,6 +182,7 @@ struct BehaviorSettings {
     click_type: u32,    // 0=Single, 1=Double
     use_keyboard: bool, // true=use keyboard key, false=use mouse button
     keyboard_key: u16,  // virtual key code for keyboard mode
+    keyboard_hold_ms: u32, // hold duration for keyboard key in milliseconds
 }
 
 impl Default for BehaviorSettings {
@@ -188,6 +192,7 @@ impl Default for BehaviorSettings {
             click_type: 0,
             use_keyboard: false,
             keyboard_key: VK_SPACE.0 as u16,
+            keyboard_hold_ms: 50, // Default 50ms hold duration
         }
     }
 }
@@ -386,9 +391,7 @@ fn get_nanoseconds_since(previous_tsc: u64) -> u64 {
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn cpu_relax() {
-    unsafe {
-        std::arch::x86_64::_mm_pause();
-    }
+    std::arch::x86_64::_mm_pause();
 }
 
 pub struct FastRng {
@@ -446,7 +449,7 @@ impl FastRng {
 }
 
 // Check if running as administrator and show warning if needed
-unsafe fn check_admin_and_warn() {
+unsafe fn check_admin_and_warn() { unsafe {
     if STATE.suppress_admin_popup {
         return;
     }
@@ -483,7 +486,7 @@ unsafe fn check_admin_and_warn() {
             );
         }
     }
-}
+}}
 
 fn to_wstring(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -498,21 +501,21 @@ static mut START_TEXT_CACHE: Option<Vec<u16>> = None;
 static mut STOP_TEXT_CACHE: Option<Vec<u16>> = None;
 
 // Dialog Helpers (Reimplemented using SendMessageW)
-unsafe fn is_dlg_button_checked(h_wnd: HWND, id: i32) -> bool {
+unsafe fn is_dlg_button_checked(h_wnd: HWND, id: i32) -> bool { unsafe {
     let state = SendMessageW(GetDlgItem(h_wnd, id), BM_GETCHECK, WPARAM(0), LPARAM(0));
     state.0 as u32 == BST_CHECKED.0
-}
+}}
 
-unsafe fn check_dlg_button(h_wnd: HWND, id: i32, checked: bool) {
+unsafe fn check_dlg_button(h_wnd: HWND, id: i32, checked: bool) { unsafe {
     let state = if checked { BST_CHECKED } else { BST_UNCHECKED };
     SendMessageW(GetDlgItem(h_wnd, id), BM_SETCHECK, WPARAM(state.0 as usize), LPARAM(0));
-}
+}}
 
 // Fixed radio button function - now individually sets each button instead of using a range
-unsafe fn check_radio_button_individual(h_wnd: HWND, button_id: i32, checked: bool) {
+unsafe fn check_radio_button_individual(h_wnd: HWND, button_id: i32, checked: bool) { unsafe {
     let state = if checked { BST_CHECKED } else { BST_UNCHECKED };
     SendMessageW(GetDlgItem(h_wnd, button_id), BM_SETCHECK, WPARAM(state.0 as usize), LPARAM(0));
-}
+}}
 
 fn get_key_name(vk: VIRTUAL_KEY) -> &'static str {
     let code = vk.0;
@@ -622,7 +625,7 @@ fn get_key_name(vk: VIRTUAL_KEY) -> &'static str {
     }
 }
 
-unsafe fn get_int_from_edit(hwnd: HWND, ctrl_id: i32) -> i32 {
+unsafe fn get_int_from_edit(hwnd: HWND, ctrl_id: i32) -> i32 { unsafe {
     let h_ctrl = GetDlgItem(hwnd, ctrl_id);
     let len = GetWindowTextLengthW(h_ctrl);
     if len == 0 { return 0; }
@@ -632,15 +635,15 @@ unsafe fn get_int_from_edit(hwnd: HWND, ctrl_id: i32) -> i32 {
     
     let str_val = String::from_utf16_lossy(&buf[..len as usize]);
     str_val.trim().parse::<i32>().unwrap_or(0)
-}
+}}
 
-unsafe fn set_int_to_edit(hwnd: HWND, ctrl_id: i32, value: i32) {
+unsafe fn set_int_to_edit(hwnd: HWND, ctrl_id: i32, value: i32) { unsafe {
     let h_ctrl = GetDlgItem(hwnd, ctrl_id);
     let s = to_wstring(&value.to_string());
     let _ = SetWindowTextW(h_ctrl, PCWSTR(s.as_ptr()));
-}
+}}
 
-unsafe fn get_float_from_edit(hwnd: HWND, ctrl_id: i32) -> f64 {
+unsafe fn get_float_from_edit(hwnd: HWND, ctrl_id: i32) -> f64 { unsafe {
     let h_ctrl = GetDlgItem(hwnd, ctrl_id);
     let len = GetWindowTextLengthW(h_ctrl);
     if len == 0 { return 0.0; }
@@ -650,13 +653,13 @@ unsafe fn get_float_from_edit(hwnd: HWND, ctrl_id: i32) -> f64 {
     
     let str_val = String::from_utf16_lossy(&buf[..len as usize]);
     str_val.trim().parse::<f64>().unwrap_or(0.0)
-}
+}}
 
-unsafe fn set_float_to_edit(hwnd: HWND, ctrl_id: i32, value: f64) {
+unsafe fn set_float_to_edit(hwnd: HWND, ctrl_id: i32, value: f64) { unsafe {
     let h_ctrl = GetDlgItem(hwnd, ctrl_id);
     let s = to_wstring(&format!("{:.2}", value));
     let _ = SetWindowTextW(h_ctrl, PCWSTR(s.as_ptr()));
-}
+}}
 
 fn get_hotkey_display_text(combo: HotkeyCombo) -> String {
     let mut parts = Vec::new();
@@ -675,7 +678,7 @@ fn get_hotkey_display_text(combo: HotkeyCombo) -> String {
     parts.join("+")
 }
 
-unsafe fn update_start_button_text() {
+unsafe fn update_start_button_text() { unsafe {
     let display_text = get_hotkey_display_text(STATE.current_hotkey);
     let start_text = format!("Start ({})", display_text);
     let stop_text = format!("Stop ({})", display_text);
@@ -690,13 +693,13 @@ unsafe fn update_start_button_text() {
     if let Some(ref text) = STOP_TEXT_CACHE {
         let _ = SetWindowTextW(GetDlgItem(STATE.h_main_wnd, IDC_BTN_STOP), PCWSTR(text.as_ptr()));
     }
-}
+}}
 
 // --- Persistence System ---
 
 impl AppSettings {
     /// Load settings from the UI controls, validating and clamping values
-    unsafe fn from_ui(h_wnd: HWND) -> Self {
+    unsafe fn from_ui(h_wnd: HWND) -> Self { unsafe {
         let mut settings = Self::default();
 
         // Timing settings with validation
@@ -722,6 +725,7 @@ impl AppSettings {
         );
         settings.behavior.use_keyboard = is_dlg_button_checked(h_wnd, IDC_CHECK_USE_KEYBOARD);
         settings.behavior.keyboard_key = STATE.current_keyboard_key.0 as u16;
+        settings.behavior.keyboard_hold_ms = clamp(get_int_from_edit(h_wnd, IDC_EDIT_HOLD_DURATION) as u32, 0, 1000);
 
         // Repeat settings - fix: properly handle all repeat modes
         if is_dlg_button_checked(h_wnd, IDC_RADIO_REPEAT_TIMES) {
@@ -750,10 +754,10 @@ impl AppSettings {
         settings.preferences.safety_disable_enabled = STATE.safety_disable_enabled;
 
         settings
-    }
+    }}
 
     /// Apply settings to the UI controls
-    unsafe fn to_ui(&self, h_wnd: HWND) {
+    unsafe fn to_ui(&self, h_wnd: HWND) { unsafe {
         // Timing settings
         set_int_to_edit(h_wnd, IDC_EDIT_HOURS, self.timing.hours as i32);
         set_int_to_edit(h_wnd, IDC_EDIT_MINS, self.timing.minutes as i32);
@@ -776,6 +780,9 @@ impl AppSettings {
         let key_name = get_key_name(STATE.current_keyboard_key);
         let key_name_w = to_wstring(key_name);
         let _ = SetWindowTextW(GetDlgItem(h_wnd, IDC_BTN_KEYBOARD_KEY), PCWSTR(key_name_w.as_ptr()));
+        
+        // Update hold duration
+        set_int_to_edit(h_wnd, IDC_EDIT_HOLD_DURATION, self.behavior.keyboard_hold_ms as i32);
         
         // Update UI visibility based on keyboard mode
         update_keyboard_mouse_ui(h_wnd, self.behavior.use_keyboard);
@@ -819,7 +826,7 @@ impl AppSettings {
         // Preferences to global state
         STATE.suppress_admin_popup = self.preferences.suppress_admin_popup;
         STATE.safety_disable_enabled = self.preferences.safety_disable_enabled;
-    }
+    }}
 }
 
 impl AppSettings {
@@ -854,7 +861,8 @@ impl AppSettings {
         output.push_str(&format!("mouse_button={}\n", self.behavior.mouse_button));
         output.push_str(&format!("click_type={}\n", self.behavior.click_type));
         output.push_str(&format!("use_keyboard={}\n", if self.behavior.use_keyboard { 1 } else { 0 }));
-        output.push_str(&format!("keyboard_key={}\n\n", self.behavior.keyboard_key));
+        output.push_str(&format!("keyboard_key={}\n", self.behavior.keyboard_key));
+        output.push_str(&format!("keyboard_hold_ms={}\n\n", self.behavior.keyboard_hold_ms));
 
         // Repeat section
         output.push_str("[repeat]\n");
@@ -935,7 +943,7 @@ impl AppSettings {
 // --- Persistence Functions ---
 
 /// Save settings with atomic write and backup recovery
-unsafe fn save_settings() {
+unsafe fn save_settings() { unsafe {
     if USE_DEFAULT_SETTINGS {
         return;
     }
@@ -981,10 +989,10 @@ unsafe fn save_settings() {
             eprintln!("Failed to create temp file: {:?}", e);
         }
     }
-}
+}}
 
 /// Load settings with fallback and validation
-unsafe fn load_settings() {
+unsafe fn load_settings() { unsafe {
     if USE_DEFAULT_SETTINGS {
         return;
     }
@@ -1046,7 +1054,7 @@ unsafe fn load_settings() {
     // Update global state from settings
     STATE.suppress_admin_popup = settings.preferences.suppress_admin_popup;
     STATE.safety_disable_enabled = settings.preferences.safety_disable_enabled;
-}
+}}
 
 // --- Parsing Helper Functions ---
 
@@ -1090,6 +1098,7 @@ fn parse_behavior_settings(behavior: &mut BehaviorSettings, key: &str, value: &s
         "click_type" => behavior.click_type = clamp(parse_u32(value)?, 0, 1),
         "use_keyboard" => behavior.use_keyboard = parse_u32(value)? != 0,
         "keyboard_key" => behavior.keyboard_key = parse_u32(value)? as u16,
+        "keyboard_hold_ms" => behavior.keyboard_hold_ms = clamp(parse_u32(value)?, 0, 1000),
         _ => {}
     }
     Ok(())
@@ -1177,8 +1186,8 @@ unsafe fn clicker_loop(
     repeat_while_held: bool,
     btn_idx: i32, type_idx: i32,
     use_fixed_pos: bool, fixed_x: i32, fixed_y: i32,
-    use_keyboard: bool, keyboard_key: u16
-) {
+    use_keyboard: bool, keyboard_key: u16, keyboard_hold_ms: u32
+) { unsafe {
     let hwnd = HWND(hwnd);
 
     let total_millis = (h as i64 * 3600000) + (m as i64 * 60000) + (s as i64 * 1000) + ms as i64;
@@ -1203,24 +1212,25 @@ unsafe fn clicker_loop(
     let input_size = std::mem::size_of::<INPUT>() as i32;
     
     // Setup inputs based on whether we're using keyboard or mouse
-    let (keyboard_inputs, mouse_fixed_inputs, mouse_current_inputs) = if use_keyboard {
-        // Keyboard inputs
-        let mut inputs = [INPUT::default(), INPUT::default()];
-        inputs[0].r#type = INPUT_KEYBOARD;
-        inputs[0].Anonymous.ki.wVk = VIRTUAL_KEY(keyboard_key);
-        inputs[0].Anonymous.ki.dwFlags = KEYBD_EVENT_FLAGS(0);
-        inputs[0].Anonymous.ki.wScan = 0;
-        inputs[0].Anonymous.ki.time = 0;
-        inputs[0].Anonymous.ki.dwExtraInfo = 0;
+    let (keyboard_down_input, keyboard_up_input, mouse_fixed_inputs, mouse_current_inputs) = if use_keyboard {
+        // Keyboard inputs - separate key down and key up for configurable hold duration
+        let mut key_down = INPUT::default();
+        key_down.r#type = INPUT_KEYBOARD;
+        key_down.Anonymous.ki.wVk = VIRTUAL_KEY(keyboard_key);
+        key_down.Anonymous.ki.dwFlags = KEYBD_EVENT_FLAGS(0); // Key down
+        key_down.Anonymous.ki.wScan = 0;
+        key_down.Anonymous.ki.time = 0;
+        key_down.Anonymous.ki.dwExtraInfo = 0;
         
-        inputs[1].r#type = INPUT_KEYBOARD;
-        inputs[1].Anonymous.ki.wVk = VIRTUAL_KEY(keyboard_key);
-        inputs[1].Anonymous.ki.dwFlags = KEYBD_EVENT_FLAGS(2); // KEYEVENTF_KEYUP
-        inputs[1].Anonymous.ki.wScan = 0;
-        inputs[1].Anonymous.ki.time = 0;
-        inputs[1].Anonymous.ki.dwExtraInfo = 0;
+        let mut key_up = INPUT::default();
+        key_up.r#type = INPUT_KEYBOARD;
+        key_up.Anonymous.ki.wVk = VIRTUAL_KEY(keyboard_key);
+        key_up.Anonymous.ki.dwFlags = KEYBD_EVENT_FLAGS(2); // KEYEVENTF_KEYUP
+        key_up.Anonymous.ki.wScan = 0;
+        key_up.Anonymous.ki.time = 0;
+        key_up.Anonymous.ki.dwExtraInfo = 0;
         
-        (Some(inputs), None, None)
+        (Some(key_down), Some(key_up), None, None)
     } else {
         // Mouse inputs
         let (btn_down, btn_up) = match btn_idx {
@@ -1259,7 +1269,7 @@ unsafe fn clicker_loop(
             Some(inputs)
         } else { None };
         
-        (None, mouse_fixed_inputs, mouse_current_inputs)
+        (None, None, mouse_fixed_inputs, mouse_current_inputs)
     };
     
     // Adjust thresholds for precision modes
@@ -1283,11 +1293,31 @@ unsafe fn clicker_loop(
         random_offset as u64 * 1_000_000
     } else { 0 };
 
+    let keyboard_hold_ns = keyboard_hold_ms as u64 * 1_000_000; // Convert ms to ns
+
     while is_running {
         // Use appropriate inputs based on mode
         if use_keyboard {
-            // Keyboard mode - ignore position settings
-            SendInput(keyboard_inputs.as_ref().unwrap(), input_size);
+            // Keyboard mode - send key down, wait for hold duration, then send key up
+            let key_down_input = keyboard_down_input.as_ref().unwrap();
+            let key_up_input = keyboard_up_input.as_ref().unwrap();
+            
+            // Send key down
+            SendInput(std::slice::from_ref(key_down_input), input_size);
+            
+            // Wait for the configured hold duration
+            if keyboard_hold_ns > 0 {
+                let hold_start_tsc = get_high_precision_time();
+                while get_nanoseconds_since(hold_start_tsc) < keyboard_hold_ns && is_running {
+                    cpu_relax();
+                    if click_count % 10 == 0 { is_running = IS_RUNNING.load(Ordering::Relaxed); }
+                }
+            }
+            
+            // Send key up (only if still running)
+            if is_running {
+                SendInput(std::slice::from_ref(key_up_input), input_size);
+            }
         } else if use_fixed_pos {
             let _ = SetCursorPos(fixed_x, fixed_y);
             SendInput(mouse_fixed_inputs.as_ref().unwrap(), input_size);
@@ -1303,7 +1333,26 @@ unsafe fn clicker_loop(
             }
             if is_running {
                 if use_keyboard {
-                    SendInput(keyboard_inputs.as_ref().unwrap(), input_size);
+                    // For double-click in keyboard mode, send another key press with hold duration
+                    let key_down_input = keyboard_down_input.as_ref().unwrap();
+                    let key_up_input = keyboard_up_input.as_ref().unwrap();
+                    
+                    // Send key down
+                    SendInput(std::slice::from_ref(key_down_input), input_size);
+                    
+                    // Wait for hold duration
+                    if keyboard_hold_ns > 0 {
+                        let hold_start_tsc = get_high_precision_time();
+                        while get_nanoseconds_since(hold_start_tsc) < keyboard_hold_ns && is_running {
+                            cpu_relax();
+                            if click_count % 10 == 0 { is_running = IS_RUNNING.load(Ordering::Relaxed); }
+                        }
+                    }
+                    
+                    // Send key up
+                    if is_running {
+                        SendInput(std::slice::from_ref(key_up_input), input_size);
+                    }
                 } else if use_fixed_pos { 
                     SendInput(mouse_fixed_inputs.as_ref().unwrap(), input_size); 
                 } else { 
@@ -1516,9 +1565,9 @@ unsafe fn clicker_loop(
 
     // Reset timer resolution when thread finishes
     timeEndPeriod(1);
-}
+}}
 
-unsafe fn toggle_start_stop() {
+unsafe fn toggle_start_stop() { unsafe {
     let h_wnd = STATE.h_main_wnd;
     let currently_running = IS_RUNNING.load(Ordering::Relaxed);
 
@@ -1597,6 +1646,7 @@ unsafe fn toggle_start_stop() {
         let fy = get_int_from_edit(h_wnd, IDC_EDIT_Y);
         let use_keyboard = is_dlg_button_checked(h_wnd, IDC_CHECK_USE_KEYBOARD);
         let keyboard_key = STATE.current_keyboard_key.0;
+        let keyboard_hold_ms = get_int_from_edit(h_wnd, IDC_EDIT_HOLD_DURATION) as u32;
 
         let hwnd_val = h_wnd.0;
 
@@ -1614,7 +1664,7 @@ unsafe fn toggle_start_stop() {
         let handle = thread::Builder::new()
             .name("ultra-precise-autoclicker".to_string())
             .spawn(move || {
-                clicker_loop(hwnd_val, h, m, s, ms, use_random, random_offset, repeat_finite, repeat_count, repeat_time, repeat_duration, repeat_while_held, btn_idx, type_idx, use_fixed, fx, fy, use_keyboard, keyboard_key);
+                clicker_loop(hwnd_val, h, m, s, ms, use_random, random_offset, repeat_finite, repeat_count, repeat_time, repeat_duration, repeat_while_held, btn_idx, type_idx, use_fixed, fx, fy, use_keyboard, keyboard_key, keyboard_hold_ms);
             })
             .expect("Failed to spawn ultra-precise autoclicker thread");
 
@@ -1623,7 +1673,7 @@ unsafe fn toggle_start_stop() {
             *handle_lock = Some(handle);
         }
     }
-}
+}}
 
 // --- Hooks and Tooltips ---
 
@@ -1825,7 +1875,7 @@ extern "system" fn keyboard_hook_proc(n_code: i32, wparam: WPARAM, lparam: LPARA
     }
 }
 
-unsafe fn start_pick_location() {
+unsafe fn start_pick_location() { unsafe {
     STATE.is_picking_location = true;
     ShowWindow(STATE.h_main_wnd, SW_MINIMIZE);
 
@@ -1863,7 +1913,7 @@ unsafe fn start_pick_location() {
     }
 
     STATE.h_mouse_hook = SetWindowsHookExW(WINDOWS_HOOK_ID(WH_MOUSE_LL.0 as i32), Some(mouse_hook_proc), h_instance, 0).unwrap();
-}
+}}
 
 // --- Settings Dialog ---
 
@@ -1926,7 +1976,7 @@ extern "system" fn settings_dlg_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpara
     }
 }
 
-unsafe fn open_settings_dialog() {
+unsafe fn open_settings_dialog() { unsafe {
     EnableWindow(STATE.h_main_wnd, FALSE);
 
     let class_name = w!("SettingsDlgClass");
@@ -1955,7 +2005,7 @@ unsafe fn open_settings_dialog() {
         h_instance,
         None
     );
-}
+}}
 
 // --- Hotkey Dialog ---
 
@@ -2070,7 +2120,7 @@ extern "system" fn hotkey_dlg_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
     }
 }
 
-unsafe fn open_hotkey_dialog() {
+unsafe fn open_hotkey_dialog() { unsafe {
     STATE.temp_hotkey = STATE.current_hotkey;
     STATE.is_listening_for_key = false;
     EnableWindow(STATE.h_main_wnd, FALSE);
@@ -2101,11 +2151,11 @@ unsafe fn open_hotkey_dialog() {
         h_instance,
         None
     );
-}
+}}
 
 // --- Main Window ---
 
-unsafe fn create_ctrl(class_name: PCWSTR, text: PCWSTR, style: u32, x: i32, y: i32, w: i32, h: i32, parent: HWND, id: i32) -> HWND {
+unsafe fn create_ctrl(class_name: PCWSTR, text: PCWSTR, style: u32, x: i32, y: i32, w: i32, h: i32, parent: HWND, id: i32) -> HWND { unsafe {
     let hwnd = CreateWindowExW(
         WINDOW_EX_STYLE(0),
         class_name,
@@ -2118,9 +2168,9 @@ unsafe fn create_ctrl(class_name: PCWSTR, text: PCWSTR, style: u32, x: i32, y: i
     );
     SendMessageW(hwnd, windows::Win32::UI::WindowsAndMessaging::WM_SETFONT, WPARAM(STATE.h_font.0 as usize), LPARAM(1));
     hwnd
-}
+}}
 
-unsafe fn create_ui(hwnd: HWND) {
+unsafe fn create_ui(hwnd: HWND) { unsafe {
     STATE.h_font = CreateFontW(16, 0, 0, 0, FW_NORMAL.0 as i32, 
         0, 0, 0, 
         u32::from(ANSI_CHARSET.0), u32::from(OUT_DEFAULT_PRECIS.0), u32::from(CLIP_DEFAULT_PRECIS.0), 
@@ -2171,9 +2221,17 @@ unsafe fn create_ui(hwnd: HWND) {
     create_ctrl(WC_STATIC, w!("Keyboard key:"), SS_LEFT as u32, 20, 145, 90, 20, hwnd, IDC_STATIC_KEY_LABEL);
     let h_btn_key = create_ctrl(WC_BUTTON, PCWSTR(to_wstring(key_name).as_ptr()), WS_CHILD.0 | WS_VISIBLE.0, 110, 142, 100, 22, hwnd, IDC_BTN_KEYBOARD_KEY);
     
+    // Add hold duration controls (initially hidden, only for keyboard mode)
+    create_ctrl(WC_STATIC, w!("Hold duration:"), SS_LEFT as u32, 20, 170, 90, 20, hwnd, IDC_STATIC_HOLD_DURATION_LABEL);
+    create_ctrl(WC_EDIT, w!("50"), WS_BORDER.0 | ES_NUMBER as u32 | ES_RIGHT as u32, 110, 167, 50, 22, hwnd, IDC_EDIT_HOLD_DURATION);
+    create_ctrl(WC_STATIC, w!("milliseconds"), SS_LEFT as u32, 165, 170, 80, 20, hwnd, IDC_STATIC_HOLD_DURATION_MS_LABEL);
+    
     // Initially hide keyboard controls
     ShowWindow(GetDlgItem(hwnd, IDC_STATIC_KEY_LABEL), SW_HIDE);
     ShowWindow(h_btn_key, SW_HIDE);
+    ShowWindow(GetDlgItem(hwnd, IDC_STATIC_HOLD_DURATION_LABEL), SW_HIDE);
+    ShowWindow(GetDlgItem(hwnd, IDC_EDIT_HOLD_DURATION), SW_HIDE);
+    ShowWindow(GetDlgItem(hwnd, IDC_STATIC_HOLD_DURATION_MS_LABEL), SW_HIDE);
 
     create_ctrl(WC_STATIC, w!("Click type:"), SS_LEFT as u32, 20, 175, 90, 20, hwnd, IDC_STATIC_CLICK_TYPE_LABEL);
     let h_combo_type = create_ctrl(WC_COMBOBOX, w!(""), CBS_DROPDOWNLIST as u32 | WS_VSCROLL.0, 110, 172, 100, 100, hwnd, IDC_COMBO_CLICK_TYPE);
@@ -2219,9 +2277,9 @@ unsafe fn create_ui(hwnd: HWND) {
     // Update UI based on initial checkbox state
     let use_keyboard = is_dlg_button_checked(hwnd, IDC_CHECK_USE_KEYBOARD);
     update_keyboard_mouse_ui(hwnd, use_keyboard);
-}
+}}
 
-unsafe fn update_keyboard_mouse_ui(hwnd: HWND, use_keyboard: bool) {
+unsafe fn update_keyboard_mouse_ui(hwnd: HWND, use_keyboard: bool) { unsafe {
     // Get all the controls
     let h_mouse_label = GetDlgItem(hwnd, IDC_STATIC_MOUSE_LABEL);
     let h_mouse_combo = GetDlgItem(hwnd, IDC_COMBO_MOUSE_BTN);
@@ -2229,6 +2287,9 @@ unsafe fn update_keyboard_mouse_ui(hwnd: HWND, use_keyboard: bool) {
     let h_key_button = GetDlgItem(hwnd, IDC_BTN_KEYBOARD_KEY);
     let h_click_type_label = GetDlgItem(hwnd, IDC_STATIC_CLICK_TYPE_LABEL);
     let h_click_type_combo = GetDlgItem(hwnd, IDC_COMBO_CLICK_TYPE);
+    let h_hold_duration_label = GetDlgItem(hwnd, IDC_STATIC_HOLD_DURATION_LABEL);
+    let h_hold_duration_edit = GetDlgItem(hwnd, IDC_EDIT_HOLD_DURATION);
+    let h_hold_duration_ms_label = GetDlgItem(hwnd, IDC_STATIC_HOLD_DURATION_MS_LABEL);
     
     if use_keyboard {
         // Move mouse controls off-screen and hide them
@@ -2251,12 +2312,28 @@ unsafe fn update_keyboard_mouse_ui(hwnd: HWND, use_keyboard: bool) {
         ShowWindow(h_key_button, SW_SHOW);
         let _ = SetWindowPos(h_key_label, None, 20, 145, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         let _ = SetWindowPos(h_key_button, None, 110, 142, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        
+        // Show and position hold duration controls
+        ShowWindow(h_hold_duration_label, SW_SHOW);
+        ShowWindow(h_hold_duration_edit, SW_SHOW);
+        ShowWindow(h_hold_duration_ms_label, SW_SHOW);
+        let _ = SetWindowPos(h_hold_duration_label, None, 20, 170, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        let _ = SetWindowPos(h_hold_duration_edit, None, 110, 167, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        let _ = SetWindowPos(h_hold_duration_ms_label, None, 165, 170, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     } else {
         // Move keyboard controls off-screen and hide them
         let _ = SetWindowPos(h_key_label, None, -1000, -1000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         let _ = SetWindowPos(h_key_button, None, -1000, -1000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         ShowWindow(h_key_label, SW_HIDE);
         ShowWindow(h_key_button, SW_HIDE);
+        
+        // Hide hold duration controls
+        let _ = SetWindowPos(h_hold_duration_label, None, -1000, -1000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        let _ = SetWindowPos(h_hold_duration_edit, None, -1000, -1000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        let _ = SetWindowPos(h_hold_duration_ms_label, None, -1000, -1000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        ShowWindow(h_hold_duration_label, SW_HIDE);
+        ShowWindow(h_hold_duration_edit, SW_HIDE);
+        ShowWindow(h_hold_duration_ms_label, SW_HIDE);
         
         // Show and position mouse controls back to their original positions
         ShowWindow(h_mouse_label, SW_SHOW);
@@ -2270,7 +2347,7 @@ unsafe fn update_keyboard_mouse_ui(hwnd: HWND, use_keyboard: bool) {
         let _ = SetWindowPos(h_click_type_label, None, 20, 175, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         let _ = SetWindowPos(h_click_type_combo, None, 110, 172, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
-}
+}}
 
 extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     unsafe {

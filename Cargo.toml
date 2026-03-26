@@ -1,9 +1,9 @@
 [package]
 name = "rust_autoclicker"
 version = "2.1.2"
-edition = "2021"
+edition = "2024"
 build = "build.rs"
-
+ 
 [dependencies.windows]
 version = "0.52"
 features = [
